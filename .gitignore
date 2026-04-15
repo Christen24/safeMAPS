@@ -1,0 +1,79 @@
+# SafeMAPS — Version Control Exclusion List
+
+# Environment & Private Configuration
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Dependencies
+node_modules/
+jspm_packages/
+.npm/
+.pnp/
+.pnp.js
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+
+# Distribution & Build Artifacts
+dist/
+build/
+.next/
+out/
+.docusaurus/
+.cache/
+public/build/
+.serverless/
+.fusebox/
+.vike/
+backend/dist/
+frontend_app/dist/
+
+# OS Specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDEs & Editor Specific
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+.project
+.classpath
+.settings/
+.sublime-project
+.sublime-workspace
+
+# Logs and Databases
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+*.sqlite
+*.db
+infrastructure-pgdata/ # If mapped to host
+
+# Data Pipeline & OSM files
+data_pipeline/data/*.osm
+data_pipeline/data/*.pbf
+data_pipeline/data/*.bz2
+data_pipeline/data/*.p*
+!data_pipeline/data/.gitkeep
+
+# Project Specific
+.gemini/
+brain/
+cUserschrisOneDriveDesktopsafeMAPSfrontend_app/
+/tmp/
