@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: safemaps-postgis
+    environment:
+      POSTGRES_DB: healthroute
+      POSTGRES_USER: healthroute
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-postgis.sh:/docker-entrypoint-initdb.d/10-init-postgis.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U healthroute -d healthroute"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: safemaps-backend
+    environment:
+      POSTGRES_HOST: postgis
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthroute
+      POSTGRES_USER: healthroute
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      WAQI_API_TOKEN: ${WAQI_API_TOKEN}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
