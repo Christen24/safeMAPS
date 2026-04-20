@@ -1,28 +1,25 @@
 """
-Custom Weighted A* Routing Engine for SafeMAPS.
+SafeMAPS — Weighted A* Routing Engine
 
-Implements the composite cost function:
-    C_e = α·T_e + β·∫AQI(t)dt + γ·R_e
+Phase 1 changes vs original:
+  - Reads nodes, adjacency, edge_data from graph_cache (in-memory)
+    instead of calling get_road_graph() which loaded ~500k rows per request
+  - AQI and risk lookups hit graph_cache.get_aqi() / get_risk()
+    instead of individual DB queries per visited edge
+  - snap_to_nearest_node() is the only DB call remaining per route request
+  - else branch after while loop now correctly signals "no path found"
 
-Where:
-    T_e  = Travel time on edge e
-    AQI  = Air quality index (approximated as AQI · T_e for the integral)
-    R_e  = Historical accident risk score
-    α,β,γ = User-defined weights
+Cost function (unchanged):
+    C_e = α·T_e + β·(AQI_e / 500) · T_e_min + γ·min(R_e / 10, 1)
 """
 
 import heapq
 import math
 import uuid
-import json
 from typing import Optional
 
-from spatial_queries import (
-    snap_to_nearest_node,
-    get_road_graph,
-    get_grid_aqi_for_edge,
-    get_segment_risk,
-)
+from graph_cache import graph_cache
+from spatial_queries import snap_to_nearest_node
 from models import (
     RouteResponse,
     CostBreakdown,
@@ -32,17 +29,18 @@ from models import (
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Haversine distance in meters between two coordinates."""
-    R = 6_371_000  # Earth radius in meters
+    """Haversine distance in metres between two WGS-84 coordinates."""
+    R = 6_371_000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    a = (math.sin(dphi / 2) ** 2
+         + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def get_profile_weights(profile: RouteProfile) -> tuple[float, float, float]:
-    """Return α, β, γ weights for predefined profiles."""
+    """Return (α, β, γ) weights for a named routing profile."""
     profiles = {
         RouteProfile.FASTEST:    (1.0, 0.0, 0.0),
         RouteProfile.SAFEST:     (0.2, 0.1, 0.7),
@@ -61,28 +59,16 @@ def compute_edge_cost(
     gamma: float,
 ) -> float:
     """
-    Compute the composite cost for a road segment.
+    Composite edge cost: C_e = α·T_e + β·AQI_exposure + γ·R_e
 
-    C_e = α·T_e + β·(AQI × T_e) + γ·R_e
-
-    The AQI integral ∫AQI(t)dt is approximated as AQI_avg × T_e,
-    since AQI is assumed constant across a short segment.
+    AQI exposure = (AQI / 500) × travel_time_min
+    Risk         = min(risk_score / 10, 1.0)
     """
-    # Normalize travel time to minutes for better scaling
     travel_time_min = travel_time_s / 60.0
-
-    # AQI exposure = AQI value × time spent breathing it (in minutes)
-    aqi_exposure = (aqi_value / 500.0) * travel_time_min  # Normalize AQI to [0,1]
-
-    # Risk score is already a probability-like value
-    risk_normalized = min(risk_score / 10.0, 1.0)  # Normalize to [0,1]
-
-    cost = (
-        alpha * travel_time_min
-        + beta * aqi_exposure
-        + gamma * risk_normalized
-    )
-    return max(cost, 0.001)  # Ensure positive cost
+    aqi_exposure = (aqi_value / 500.0) * travel_time_min
+    risk_norm = min(risk_score / 10.0, 1.0)
+    cost = alpha * travel_time_min + beta * aqi_exposure + gamma * risk_norm
+    return max(cost, 0.001)
 
 
 async def find_route(
@@ -96,103 +82,84 @@ async def find_route(
     profile: RouteProfile = RouteProfile.BALANCED,
 ) -> Optional[RouteResponse]:
     """
-    Run weighted A* pathfinding from origin to destination.
+    Run weighted A* from origin to destination.
 
-    Steps:
-    1. Snap origin/destination to nearest road nodes
-    2. Load the road graph from PostGIS
-    3. Run A* with composite cost function
-    4. Collect segment metadata and build GeoJSON response
+    DB calls: 2 (snap origin, snap destination)
+    In-memory lookups: all node/edge/AQI/risk data from graph_cache
     """
-    # ── Step 1: Snap to road network ─────────────────────────────────
+    if not graph_cache.is_loaded:
+        return None
+
+    # ── Snap to nearest road nodes (2 DB calls total) ─────────────────
     origin_node = await snap_to_nearest_node(origin_lat, origin_lon)
-    dest_node = await snap_to_nearest_node(dest_lat, dest_lon)
+    dest_node   = await snap_to_nearest_node(dest_lat, dest_lon)
 
     if not origin_node or not dest_node:
         return None
 
     start_id = origin_node["id"]
-    goal_id = dest_node["id"]
+    goal_id  = dest_node["id"]
 
     if start_id == goal_id:
         return None
 
-    # ── Step 2: Load graph ───────────────────────────────────────────
-    nodes, adjacency, edge_data = await get_road_graph()
+    nodes     = graph_cache.nodes
+    adjacency = graph_cache.adjacency
 
     if start_id not in nodes or goal_id not in nodes:
         return None
 
     goal_lat, goal_lon = nodes[goal_id]
 
-    # ── Step 3: A* Search ────────────────────────────────────────────
-    # Priority queue: (f_score, node_id)
+    # ── A* Search ─────────────────────────────────────────────────────
     open_set = [(0.0, start_id)]
-    came_from = {}  # node_id -> (prev_node_id, edge_id)
-    g_score = {start_id: 0.0}
-
-    # Cache for AQI and risk lookups
-    edge_aqi_cache = {}
-    edge_risk_cache = {}
+    came_from: dict[int, tuple[int, int]] = {}   # node → (prev_node, edge_id)
+    g_score: dict[int, float] = {start_id: 0.0}
+    path_found = False
 
     while open_set:
-        current_f, current = heapq.heappop(open_set)
+        _f, current = heapq.heappop(open_set)
 
         if current == goal_id:
+            path_found = True
             break
 
-        if current not in adjacency:
+        neighbours = adjacency.get(current)
+        if not neighbours:
             continue
 
-        for neighbor, edge_id, length_m, speed_kmh in adjacency[current]:
-            # Calculate travel time
-            speed_ms = max(speed_kmh / 3.6, 0.5)  # Convert to m/s, min 0.5
+        for neighbour, edge_id, length_m, speed_kmh in neighbours:
+            speed_ms = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
 
-            # Get AQI for this edge (cached)
-            if edge_id not in edge_aqi_cache:
-                try:
-                    edge_aqi_cache[edge_id] = await get_grid_aqi_for_edge(edge_id)
-                except Exception:
-                    edge_aqi_cache[edge_id] = 50.0  # Default moderate AQI
-            aqi_value = edge_aqi_cache[edge_id]
+            # All lookups are now O(1) dict reads — no DB calls in the loop
+            aqi_value  = graph_cache.get_aqi(edge_id)
+            risk_score = graph_cache.get_risk(edge_id)
 
-            # Get risk for this edge (cached)
-            if edge_id not in edge_risk_cache:
-                try:
-                    edge_risk_cache[edge_id] = await get_segment_risk(edge_id)
-                except Exception:
-                    edge_risk_cache[edge_id] = 0.0
-            risk_score = edge_risk_cache[edge_id]
-
-            # Compute composite edge cost
             edge_cost = compute_edge_cost(
-                travel_time_s, aqi_value, risk_score,
-                alpha, beta, gamma
+                travel_time_s, aqi_value, risk_score, alpha, beta, gamma
             )
-
             tentative_g = g_score[current] + edge_cost
 
-            if tentative_g < g_score.get(neighbor, float("inf")):
-                came_from[neighbor] = (current, edge_id)
-                g_score[neighbor] = tentative_g
+            if tentative_g < g_score.get(neighbour, float("inf")):
+                came_from[neighbour] = (current, edge_id)
+                g_score[neighbour] = tentative_g
 
-                # Heuristic: Haversine distance / max speed → optimistic time
-                if neighbor in nodes:
-                    n_lat, n_lon = nodes[neighbor]
-                    h = haversine(n_lat, n_lon, goal_lat, goal_lon) / 33.3  # ~120 km/h max
-                    h_cost = alpha * (h / 60.0)  # Convert to minutes
+                # Heuristic: optimistic travel time using straight-line distance
+                if neighbour in nodes:
+                    n_lat, n_lon = nodes[neighbour]
+                    h_dist = haversine(n_lat, n_lon, goal_lat, goal_lon)
+                    h_cost = alpha * (h_dist / 3.6 / 33.3 / 60.0)  # ~120 km/h max
                 else:
                     h_cost = 0.0
 
-                f_score = tentative_g + h_cost
-                heapq.heappush(open_set, (f_score, neighbor))
-    else:
-        # No path found
+                heapq.heappush(open_set, (tentative_g + h_cost, neighbour))
+
+    if not path_found:
         return None
 
-    # ── Step 4: Reconstruct path ─────────────────────────────────────
-    path_edges = []
+    # ── Reconstruct path ──────────────────────────────────────────────
+    path_edges: list[int] = []
     current = goal_id
     while current in came_from:
         prev, edge_id = came_from[current]
@@ -203,28 +170,29 @@ async def find_route(
     if not path_edges:
         return None
 
-    # ── Step 5: Build response ───────────────────────────────────────
-    segments = []
-    all_coords = []
+    # ── Build response ────────────────────────────────────────────────
+    segments: list[SegmentInfo] = []
+    all_coords: list = []
     total_time = 0.0
     total_distance = 0.0
     total_aqi_weighted = 0.0
     max_aqi = 0.0
     hotspots = 0
 
+    edge_data = graph_cache.edge_data
+
     for eid in path_edges:
         ed = edge_data.get(eid, {})
-        length_m = ed.get("length_m", 0)
+        length_m  = ed.get("length_m", 0)
         speed_kmh = ed.get("speed_kmh", 30)
-        speed_ms = max(speed_kmh / 3.6, 0.5)
+        speed_ms  = max(speed_kmh / 3.6, 0.5)
         travel_time_s = length_m / speed_ms
 
-        aqi_val = edge_aqi_cache.get(eid, 50.0)
-        risk_val = edge_risk_cache.get(eid, 0.0)
+        aqi_val  = graph_cache.get_aqi(eid)
+        risk_val = graph_cache.get_risk(eid)
 
         seg_cost = compute_edge_cost(
-            travel_time_s, aqi_val, risk_val,
-            alpha, beta, gamma
+            travel_time_s, aqi_val, risk_val, alpha, beta, gamma
         )
 
         geom = ed.get("geometry", {"type": "LineString", "coordinates": []})
@@ -249,19 +217,14 @@ async def find_route(
         if risk_val > 0.5:
             hotspots += 1
 
-    avg_aqi = (total_aqi_weighted / max(total_time / 60.0, 0.001))
-
-    route_geojson = {
-        "type": "LineString",
-        "coordinates": all_coords,
-    }
+    avg_aqi = total_aqi_weighted / max(total_time / 60.0, 0.001)
 
     cost_breakdown = CostBreakdown(
         total_cost=g_score.get(goal_id, 0.0),
         travel_time_cost=alpha * (total_time / 60.0),
         aqi_exposure_cost=beta * (total_aqi_weighted / 500.0),
         accident_risk_cost=gamma * sum(
-            edge_risk_cache.get(eid, 0) for eid in path_edges
+            graph_cache.get_risk(eid) for eid in path_edges
         ),
         travel_time_minutes=total_time / 60.0,
         distance_km=total_distance / 1000.0,
@@ -274,7 +237,7 @@ async def find_route(
         route_id=str(uuid.uuid4()),
         profile=profile,
         cost_breakdown=cost_breakdown,
-        geometry=route_geojson,
+        geometry={"type": "LineString", "coordinates": all_coords},
         segments=segments,
         weights_used={"alpha": alpha, "beta": beta, "gamma": gamma},
     )
