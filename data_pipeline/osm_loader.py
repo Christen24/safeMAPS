@@ -47,8 +47,8 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 from config import settings
 
-GEOFABRIK_URL = "https://download.geofabrik.de/asia/india/karnataka-latest.osm.pbf"
-DEFAULT_PBF = Path(__file__).parent / "karnataka-latest.osm.pbf"
+GEOFABRIK_URL = "https://download.geofabrik.de/asia/india/southern-zone-latest.osm.pbf"
+DEFAULT_PBF = Path(__file__).parent / "southern-zone-latest.osm.pbf"
 
 # Bangalore bounding box
 BBOX = (
@@ -91,7 +91,8 @@ async def download_pbf(url: str, dest: Path) -> None:
         logger.info(f"PBF already exists at {dest}, skipping download.")
         return
     logger.info(f"Downloading {url} ...")
-    async with httpx.AsyncClient(timeout=900) as client:
+    headers = {"User-Agent": "SafeMAPS-Data-Pipeline/1.0"}
+    async with httpx.AsyncClient(timeout=900, follow_redirects=True, headers=headers) as client:
         async with client.stream("GET", url) as resp:
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
