@@ -1,18 +1,26 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import MapView from './components/MapView';
 import LandingPage from './components/LandingPage';
 import './index.css';
 import 'leaflet/dist/leaflet.css';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = '/api';
+
+// Preset weights per profile — used to detect custom slider values
+const PRESET_WEIGHTS = {
+    fastest: { alpha: 1.0, beta: 0.0, gamma: 0.0 },
+    safest: { alpha: 0.2, beta: 0.1, gamma: 0.7 },
+    healthiest: { alpha: 0.1, beta: 0.7, gamma: 0.2 },
+    balanced: { alpha: 0.4, beta: 0.3, gamma: 0.3 },
+};
 
 function App() {
-    const [view, setView] = useState('landing'); // 'landing' | 'dashboard' | 'heatmaps'
+    const [view, setView] = useState('landing');
     const [origin, setOrigin] = useState({ lat: '', lon: '' });
     const [destination, setDestination] = useState({ lat: '', lon: '' });
     const [profile, setProfile] = useState('safest');
-    const [weights, setWeights] = useState({ alpha: 0.40, beta: 0.30, gamma: 0.30 });
+    const [weights, setWeights] = useState({ alpha: 0.20, beta: 0.10, gamma: 0.70 });
     const [routes, setRoutes] = useState([]);
     const [selectedRoute, setSelectedRoute] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -21,6 +29,75 @@ function App() {
     const [showBlackspots, setShowBlackspots] = useState(true);
     const [aqiData, setAqiData] = useState(null);
     const [blackspotData, setBlackspotData] = useState(null);
+    const [mapBounds, setMapBounds] = useState(null);
+
+    // ── Bug 1 fix: Fetch AQI heatmap data on bounds change ──────────
+    const fetchAQI = useCallback(async (bounds) => {
+        if (!bounds) return;
+        try {
+            const p = new URLSearchParams({
+                min_lat: bounds.south, max_lat: bounds.north,
+                min_lon: bounds.west, max_lon: bounds.east,
+            });
+            const resp = await fetch(`${API_BASE}/aqi/heatmap?${p}`);
+            if (resp.ok) setAqiData(await resp.json());
+        } catch (err) {
+            console.warn('AQI fetch failed:', err.message);
+        }
+    }, []);
+
+    const handleBoundsChange = useCallback((bounds) => {
+        setMapBounds(bounds);
+        if (showAQI) fetchAQI(bounds);
+    }, [showAQI, fetchAQI]);
+
+    const handleShowAQI = useCallback((val) => {
+        setShowAQI(val);
+        if (val) fetchAQI(mapBounds);
+    }, [mapBounds, fetchAQI]);
+
+    // ── Bug 2 fix: Fetch blackspot data once on dashboard entry ─────
+    const fetchBlackspots = useCallback(async () => {
+        try {
+            const p = new URLSearchParams({
+                min_lat: 12.85, max_lat: 13.15,
+                min_lon: 77.45, max_lon: 77.78,
+            });
+            const resp = await fetch(`${API_BASE}/safety/blackspots?${p}`);
+            if (resp.ok) setBlackspotData(await resp.json());
+        } catch (err) {
+            console.warn('Blackspot fetch failed:', err.message);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (view === 'dashboard' || view === 'heatmaps') fetchBlackspots();
+    }, [view, fetchBlackspots]);
+
+    // ── Bug 6 fix: Clear stale routes when coordinates change ───────
+    const isFirstRender = useRef(true);
+    useEffect(() => {
+        if (isFirstRender.current) { isFirstRender.current = false; return; }
+        setRoutes([]);
+        setSelectedRoute(null);
+        setError(null);
+    }, [origin.lat, origin.lon, destination.lat, destination.lon]);
+
+    // ── Bug 8 fix: Sync sliders when profile card is clicked ────────
+    const handleProfileChange = useCallback((newProfile) => {
+        setProfile(newProfile);
+        const preset = PRESET_WEIGHTS[newProfile];
+        if (preset) setWeights({ alpha: preset.alpha, beta: preset.beta, gamma: preset.gamma });
+    }, []);
+
+    // ── Bug 3+4 fix: Custom weights → POST with use_custom_weights flag
+    const isCustomWeight = useCallback(() => {
+        const preset = PRESET_WEIGHTS[profile];
+        if (!preset) return true;
+        return Math.abs(weights.alpha - preset.alpha) > 0.01 ||
+            Math.abs(weights.beta - preset.beta) > 0.01 ||
+            Math.abs(weights.gamma - preset.gamma) > 0.01;
+    }, [profile, weights]);
 
     const computeRoute = useCallback(async () => {
         if (!origin.lat || !origin.lon || !destination.lat || !destination.lon) {
@@ -30,21 +107,44 @@ function App() {
         setLoading(true);
         setError(null);
         try {
-            const resp = await fetch(`${API_BASE}/route/compare?` + new URLSearchParams({
-                origin_lat: origin.lat, origin_lon: origin.lon,
-                dest_lat: destination.lat, dest_lon: destination.lon,
-            }));
-            if (!resp.ok) throw new Error((await resp.json()).detail || 'Route computation failed');
-            const data = await resp.json();
-            setRoutes(data.routes);
-            setSelectedRoute(data.routes.find(r => r.profile === profile) || data.routes[0]);
-        } catch {
-            setRoutes(getMockRoutes());
-            setSelectedRoute(getMockRoutes().find(r => r.profile === profile) || getMockRoutes()[0]);
+            if (isCustomWeight()) {
+                const resp = await fetch(`${API_BASE}/route`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        origin: { lat: +origin.lat, lon: +origin.lon },
+                        destination: { lat: +destination.lat, lon: +destination.lon },
+                        profile,
+                        alpha: weights.alpha,
+                        beta: weights.beta,
+                        gamma: weights.gamma,
+                        use_custom_weights: true,
+                    }),
+                });
+                if (!resp.ok) throw new Error((await resp.json()).detail || 'Route computation failed');
+                const route = await resp.json();
+                setRoutes([route]);
+                setSelectedRoute(route);
+            } else {
+                const params = new URLSearchParams({
+                    origin_lat: origin.lat, origin_lon: origin.lon,
+                    dest_lat: destination.lat, dest_lon: destination.lon,
+                });
+                const resp = await fetch(`${API_BASE}/route/compare?${params}`);
+                if (!resp.ok) throw new Error((await resp.json()).detail || 'Route computation failed');
+                const data = await resp.json();
+                setRoutes(data.routes);
+                setSelectedRoute(data.routes.find(r => r.profile === profile) || data.routes[0]);
+            }
+        } catch (err) {
+            setError(err.message || 'Route computation failed');
+            const mocks = getMockRoutes();
+            setRoutes(mocks);
+            setSelectedRoute(mocks.find(r => r.profile === profile) || mocks[0]);
         } finally {
             setLoading(false);
         }
-    }, [origin, destination, profile]);
+    }, [origin, destination, profile, weights, isCustomWeight]);
 
     const handleMapClick = useCallback((latlng) => {
         if (!origin.lat) {
@@ -52,9 +152,12 @@ function App() {
         } else if (!destination.lat) {
             setDestination({ lat: latlng.lat.toFixed(6), lon: latlng.lng.toFixed(6) });
         } else {
+            // Third click: fresh start
             setOrigin({ lat: latlng.lat.toFixed(6), lon: latlng.lng.toFixed(6) });
             setDestination({ lat: '', lon: '' });
-            setRoutes([]); setSelectedRoute(null);
+            setRoutes([]);
+            setSelectedRoute(null);
+            setError(null);
         }
     }, [origin, destination]);
 
@@ -69,7 +172,6 @@ function App() {
 
     return (
         <div className="app">
-            {/* Navigation Bar */}
             <div className="nav-bar" style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1001 }}>
                 <div className="nav-brand">
                     <h1>🗺️ SafeMAPS</h1>
@@ -79,7 +181,7 @@ function App() {
                     <button className={`nav-tab ${view === 'dashboard' ? 'active' : ''}`} onClick={() => setView('dashboard')}>
                         📍 Dashboard
                     </button>
-                    <button className={`nav-tab ${view === 'heatmaps' ? 'active' : ''}`} onClick={() => { setView('heatmaps'); setShowAQI(true); }}>
+                    <button className={`nav-tab ${view === 'heatmaps' ? 'active' : ''}`} onClick={() => { setView('heatmaps'); handleShowAQI(true); }}>
                         🌫️ Heatmaps
                     </button>
                     <button className="nav-tab" onClick={() => setView('landing')}>
@@ -94,12 +196,11 @@ function App() {
                 </div>
             </div>
 
-            {/* Main Content */}
             <div className="main-content" style={{ marginTop: 52 }}>
                 <Sidebar
                     origin={origin} destination={destination}
                     setOrigin={setOrigin} setDestination={setDestination}
-                    profile={profile} setProfile={setProfile}
+                    profile={profile} setProfile={handleProfileChange}
                     weights={weights} setWeights={setWeights}
                     routes={routes} selectedRoute={selectedRoute}
                     setSelectedRoute={setSelectedRoute}
@@ -109,11 +210,11 @@ function App() {
                 <MapView
                     origin={origin} destination={destination}
                     selectedRoute={selectedRoute} routes={routes}
-                    showAQI={showAQI} setShowAQI={setShowAQI}
+                    showAQI={showAQI} setShowAQI={handleShowAQI}
                     showBlackspots={showBlackspots} setShowBlackspots={setShowBlackspots}
                     aqiData={aqiData} blackspotData={blackspotData}
                     loading={loading} onMapClick={handleMapClick}
-                    onBoundsChange={() => { }}
+                    onBoundsChange={handleBoundsChange}
                 />
             </div>
         </div>
