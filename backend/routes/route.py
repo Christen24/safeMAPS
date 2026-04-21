@@ -1,6 +1,11 @@
 """
 Route computation API endpoints.
+
+Bug 4 fix: uses explicit use_custom_weights flag instead of fragile float comparison.
+Bug 5 fix: /compare runs all 4 A* searches concurrently via asyncio.gather.
 """
+
+import asyncio
 
 from fastapi import APIRouter, HTTPException
 
@@ -17,15 +22,13 @@ async def compute_route(request: RouteRequest):
 
     The route minimizes: C_e = α·T_e + β·∫AQI(t)dt + γ·R_e
 
-    You can either:
-    - Use a preset profile (fastest, safest, healthiest, balanced)
-    - Provide custom α, β, γ weights
+    - Set use_custom_weights=true to use slider values directly
+    - Set use_custom_weights=false (default) to use profile presets
     """
-    # Use profile weights or custom weights
-    if request.alpha == 0.4 and request.beta == 0.3 and request.gamma == 0.3:
-        alpha, beta, gamma = get_profile_weights(request.profile)
-    else:
+    if request.use_custom_weights:
         alpha, beta, gamma = request.alpha, request.beta, request.gamma
+    else:
+        alpha, beta, gamma = get_profile_weights(request.profile)
 
     route = await find_route(
         origin_lat=request.origin.lat,
@@ -57,24 +60,22 @@ async def compare_routes(
 ):
     """
     Compare routes across all profiles (fastest, safest, healthiest, balanced).
-    Returns up to 4 different route options.
+    Bug 5 fix: runs all 4 A* searches concurrently instead of sequentially.
     """
-    routes = []
-
-    for profile in RouteProfile:
-        alpha, beta, gamma = get_profile_weights(profile)
-        route = await find_route(
+    results = await asyncio.gather(*[
+        find_route(
             origin_lat=origin_lat,
             origin_lon=origin_lon,
             dest_lat=dest_lat,
             dest_lon=dest_lon,
-            alpha=alpha,
-            beta=beta,
-            gamma=gamma,
-            profile=profile,
+            alpha=a, beta=b, gamma=g,
+            profile=p,
         )
-        if route:
-            routes.append(route)
+        for p in RouteProfile
+        for a, b, g in [get_profile_weights(p)]
+    ], return_exceptions=True)
+
+    routes = [r for r in results if r and not isinstance(r, Exception)]
 
     if not routes:
         raise HTTPException(
