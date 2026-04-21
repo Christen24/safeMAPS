@@ -33,6 +33,7 @@ class RouteRequest(BaseModel):
     alpha: float = Field(default=0.4, ge=0, le=1, description="Weight for travel time")
     beta: float = Field(default=0.3, ge=0, le=1, description="Weight for AQI exposure")
     gamma: float = Field(default=0.3, ge=0, le=1, description="Weight for accident risk")
+    use_custom_weights: bool = Field(default=False, description="If true, use alpha/beta/gamma directly instead of profile presets")
 
 
 class BoundingBoxRequest(BaseModel):
