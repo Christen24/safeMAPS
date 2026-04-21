@@ -943,3 +943,50 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .fade-in-up {
   animation: fadeInUp 0.5s var(--ease-smooth) forwards;
 }
+
+/* ─── Place Input / Nominatim Autocomplete (Bug 7) ────────── */
+.place-input-wrapper {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.suggestions-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1010;
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 4px 0;
+  background: var(--surface-container-high);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-ambient);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.suggestions-dropdown li {
+  padding: 8px 12px 8px 32px;
+  cursor: pointer;
+  transition: var(--ease-fast);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.suggestions-dropdown li:hover {
+  background: var(--surface-bright);
+}
+
+.suggestion-name {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+
+.suggestion-detail {
+  font-size: 0.6rem;
+  color: var(--on-surface-variant);
+}
