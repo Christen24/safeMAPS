@@ -1,9 +1,114 @@
+import { useState, useCallback, useRef, useEffect } from 'react';
+
 const PROFILES = [
     { id: 'fastest', label: 'Fastest', sub: 'Min. Time', icon: '⚡' },
     { id: 'safest', label: 'Safest', sub: 'Max. Security', icon: '🛡️' },
     { id: 'healthiest', label: 'Healthiest', sub: 'Low AQI', icon: '🫁' },
     { id: 'balanced', label: 'Balanced', sub: 'Weighted', icon: '⚖️' },
 ];
+
+// ── Bug 7 fix: Nominatim geocoding for place name search ────────────
+async function geocode(query) {
+    if (!query || query.length < 3) return [];
+    try {
+        const resp = await fetch(
+            `https://nominatim.openstreetmap.org/search?` +
+            `q=${encodeURIComponent(query + ', Bangalore, India')}&format=json&limit=5&addressdetails=1`,
+            { headers: { 'Accept-Language': 'en', 'User-Agent': 'SafeMAPS/1.0' } }
+        );
+        if (!resp.ok) return [];
+        return await resp.json();
+    } catch {
+        return [];
+    }
+}
+
+function PlaceInput({ placeholder, value, onSelect, indicator }) {
+    const [query, setQuery] = useState('');
+    const [suggestions, setSuggestions] = useState([]);
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const [displayName, setDisplayName] = useState('');
+    const debounceRef = useRef(null);
+    const wrapperRef = useRef(null);
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handler = (e) => {
+            if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+                setShowSuggestions(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    // Update display when value changes externally (e.g. map click)
+    useEffect(() => {
+        if (value.lat && value.lon && !displayName) {
+            setDisplayName(`${(+value.lat).toFixed(4)}, ${(+value.lon).toFixed(4)}`);
+        }
+        if (!value.lat && !value.lon) {
+            setDisplayName('');
+            setQuery('');
+        }
+    }, [value.lat, value.lon]);
+
+    const handleInputChange = useCallback((e) => {
+        const q = e.target.value;
+        setQuery(q);
+        setDisplayName('');
+
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+
+        if (q.length >= 3) {
+            debounceRef.current = setTimeout(async () => {
+                const results = await geocode(q);
+                setSuggestions(results);
+                setShowSuggestions(results.length > 0);
+            }, 350);
+        } else {
+            setSuggestions([]);
+            setShowSuggestions(false);
+        }
+    }, []);
+
+    const handleSelect = useCallback((item) => {
+        const shortName = item.display_name.split(',').slice(0, 2).join(', ');
+        setDisplayName(shortName);
+        setQuery('');
+        setSuggestions([]);
+        setShowSuggestions(false);
+        onSelect({ lat: item.lat, lon: item.lon });
+    }, [onSelect]);
+
+    return (
+        <div className="place-input-wrapper" ref={wrapperRef}>
+            <div className="input-group">
+                <span className={`indicator ${indicator}`} />
+                <input
+                    placeholder={placeholder}
+                    value={displayName || query}
+                    onChange={handleInputChange}
+                    onFocus={() => { if (suggestions.length) setShowSuggestions(true); }}
+                />
+            </div>
+            {showSuggestions && (
+                <ul className="suggestions-dropdown">
+                    {suggestions.map((s, i) => (
+                        <li key={i} onClick={() => handleSelect(s)}>
+                            <span className="suggestion-name">
+                                {s.display_name.split(',').slice(0, 2).join(', ')}
+                            </span>
+                            <span className="suggestion-detail">
+                                {s.display_name.split(',').slice(2, 4).join(', ')}
+                            </span>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
 
 export default function Sidebar({
     origin, destination, setOrigin, setDestination,
@@ -20,29 +125,21 @@ export default function Sidebar({
             <div className="route-input-section">
                 <div className="section-label">Route</div>
 
-                <div className="input-group">
-                    <span className="indicator origin" />
-                    <input placeholder="Origin latitude" value={origin.lat}
-                        onChange={e => setOrigin({ ...origin, lat: e.target.value })} />
-                </div>
-                <div className="input-group">
-                    <span className="indicator origin" style={{ opacity: 0.4 }} />
-                    <input placeholder="Origin longitude" value={origin.lon}
-                        onChange={e => setOrigin({ ...origin, lon: e.target.value })} />
-                </div>
+                <PlaceInput
+                    placeholder="🔍 Search origin (e.g. Indiranagar)"
+                    value={origin}
+                    onSelect={setOrigin}
+                    indicator="origin"
+                />
 
                 <button className="swap-btn" onClick={onSwap} title="Swap origin & destination">⇅</button>
 
-                <div className="input-group">
-                    <span className="indicator dest" />
-                    <input placeholder="Destination latitude" value={destination.lat}
-                        onChange={e => setDestination({ ...destination, lat: e.target.value })} />
-                </div>
-                <div className="input-group">
-                    <span className="indicator dest" style={{ opacity: 0.4 }} />
-                    <input placeholder="Destination longitude" value={destination.lon}
-                        onChange={e => setDestination({ ...destination, lon: e.target.value })} />
-                </div>
+                <PlaceInput
+                    placeholder="🔍 Search destination (e.g. Koramangala)"
+                    value={destination}
+                    onSelect={setDestination}
+                    indicator="dest"
+                />
 
                 {/* Route Profile Grid */}
                 <div className="section-label" style={{ marginTop: 16 }}>Route Profile</div>
@@ -60,7 +157,7 @@ export default function Sidebar({
                     ))}
                 </div>
 
-                <p className="hint">💡 Click on the map to set origin & destination</p>
+                <p className="hint">💡 Click on the map or search by place name</p>
             </div>
 
             {/* Cost Weights */}
@@ -82,7 +179,7 @@ export default function Sidebar({
                         <span className="weight-label">🌫️ AQI Exposure (β)</span>
                         <span className="weight-value aqi">{weights.beta.toFixed(2)}</span>
                     </div>
-                    <input type="range" className="aqi" min="0" max="1" step="0.05"
+                    <input type="range" className="time" min="0" max="1" step="0.05"
                         value={weights.beta}
                         onChange={e => setWeights({ ...weights, beta: +e.target.value })} />
                 </div>
@@ -106,7 +203,7 @@ export default function Sidebar({
             {/* Route Results */}
             {routes.length > 0 && (
                 <div className="results-section">
-                    <div className="section-label">Route Comparison · {routes.length} alternatives</div>
+                    <div className="section-label">Route Comparison · {routes.length} alternative{routes.length > 1 ? 's' : ''}</div>
                     {routes.map(route => (
                         <RouteCard key={route.route_id} route={route}
                             isSelected={selectedRoute?.route_id === route.route_id}
