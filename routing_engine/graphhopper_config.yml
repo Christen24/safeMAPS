@@ -1,0 +1,44 @@
+# GraphHopper Configuration for SafeMAPS
+# ==========================================
+# This is a placeholder for future GraphHopper integration.
+# Currently, SafeMAPS uses a Python-based weighted A* algorithm.
+
+graphhopper:
+  datareader.file: map_data_bangalore.osm.pbf
+
+  # Routing profiles
+  profiles:
+    - name: health_safe
+      vehicle: car
+      weighting: custom
+      turn_costs: true
+
+    - name: fastest
+      vehicle: car
+      weighting: fastest
+
+  # Custom model for health-safe routing
+  custom_models:
+    health_safe:
+      speed:
+        - if: road_class == MOTORWAY
+          multiply_by: 0.9
+      priority:
+        - if: true
+          multiply_by: "aqi_factor"
+        - if: true
+          multiply_by: "safety_factor"
+
+  # Graph storage
+  graph:
+    location: ./graph-cache
+    dataaccess: RAM_STORE
+
+  # Server
+  server:
+    application_connectors:
+      - type: http
+        port: 8989
+    admin_connectors:
+      - type: http
+        port: 8990
