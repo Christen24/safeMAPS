@@ -9,7 +9,8 @@ geojson>=3.1.0
 numpy>=1.26.0
 scipy>=1.12.0
 python-dotenv>=1.0.0
-
-# OSM parsing — replaces pyrosm which had reliability issues on large PBFs
-# Requires the osmium C++ library: sudo apt install libosmium-dev
 osmium>=3.7.0
+
+# Phase 2: background scheduling for AQI + traffic scrape cycles
+# AsyncIOScheduler runs coroutines directly in the FastAPI event loop
+apscheduler>=3.10.0
