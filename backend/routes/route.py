@@ -6,6 +6,7 @@ Bug 5 fix: /compare runs all 4 A* searches concurrently via asyncio.gather.
 """
 
 import asyncio
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException
 
@@ -13,6 +14,26 @@ from models import RouteRequest, RouteResponse, CompareRoutesResponse, RouteProf
 from routing import find_route, get_profile_weights
 
 router = APIRouter()
+BANGALORE_TZ = timezone(timedelta(hours=5, minutes=30))
+
+
+def _parse_hour(departure_time: str | None) -> int | None:
+    """Parse ISO-8601 input and return the Bangalore local hour."""
+    if not departure_time:
+        return None
+
+    try:
+        normalized = departure_time.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="departure_time must be an ISO-8601 datetime string.",
+        ) from exc
+
+    if parsed.tzinfo is None:
+        return parsed.hour
+    return parsed.astimezone(BANGALORE_TZ).hour
 
 
 @router.post("", response_model=RouteResponse)
@@ -30,6 +51,8 @@ async def compute_route(request: RouteRequest):
     else:
         alpha, beta, gamma = get_profile_weights(request.profile)
 
+    hour = _parse_hour(request.departure_time)
+
     route = await find_route(
         origin_lat=request.origin.lat,
         origin_lon=request.origin.lon,
@@ -39,6 +62,7 @@ async def compute_route(request: RouteRequest):
         beta=beta,
         gamma=gamma,
         profile=request.profile,
+        hour=hour,
     )
 
     if not route:
@@ -57,11 +81,14 @@ async def compare_routes(
     origin_lon: float,
     dest_lat: float,
     dest_lon: float,
+    departure_time: str | None = None,
 ):
     """
     Compare routes across all profiles (fastest, safest, healthiest, balanced).
     Bug 5 fix: runs all 4 A* searches concurrently instead of sequentially.
     """
+    hour = _parse_hour(departure_time)
+
     results = await asyncio.gather(*[
         find_route(
             origin_lat=origin_lat,
@@ -70,6 +97,7 @@ async def compare_routes(
             dest_lon=dest_lon,
             alpha=a, beta=b, gamma=g,
             profile=p,
+            hour=hour,
         )
         for p in RouteProfile
         for a, b, g in [get_profile_weights(p)]
