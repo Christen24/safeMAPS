@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { aqiColor } from './MapView';
 
 const PROFILES = [
     { id: 'fastest', label: 'Fastest', sub: 'Min. Time', icon: '⚡' },
@@ -13,11 +14,12 @@ async function geocode(query) {
     try {
         const resp = await fetch(
             `https://nominatim.openstreetmap.org/search?` +
-            `q=${encodeURIComponent(query + ', Bangalore, India')}&format=json&limit=5&addressdetails=1`,
-            { headers: { 'Accept-Language': 'en', 'User-Agent': 'SafeMAPS/1.0' } }
+            `q=${encodeURIComponent(query + ', Bangalore')}&format=json&limit=5`,
+            { headers: { 'Accept-Language': 'en' } }
         );
         if (!resp.ok) return [];
-        return await resp.json();
+        const results = await resp.json();
+        return results.map(({ lat, lon, display_name }) => ({ lat, lon, display_name }));
     } catch {
         return [];
     }
@@ -65,7 +67,7 @@ function PlaceInput({ placeholder, value, onSelect, indicator }) {
                 const results = await geocode(q);
                 setSuggestions(results);
                 setShowSuggestions(results.length > 0);
-            }, 350);
+            }, 300);
         } else {
             setSuggestions([]);
             setShowSuggestions(false);
@@ -93,9 +95,9 @@ function PlaceInput({ placeholder, value, onSelect, indicator }) {
                 />
             </div>
             {showSuggestions && (
-                <ul className="suggestions-dropdown">
+                <ul className="geocode-dropdown">
                     {suggestions.map((s, i) => (
-                        <li key={i} onClick={() => handleSelect(s)}>
+                        <li className="geocode-option" key={i} onClick={() => handleSelect(s)}>
                             <span className="suggestion-name">
                                 {s.display_name.split(',').slice(0, 2).join(', ')}
                             </span>
@@ -114,10 +116,16 @@ export default function Sidebar({
     origin, destination, setOrigin, setDestination,
     profile, setProfile,
     weights, setWeights,
+    departureTime, setDepartureTime,
     routes, selectedRoute, setSelectedRoute,
     onCompute, onSwap, loading, error,
 }) {
     const canCompute = origin.lat && origin.lon && destination.lat && destination.lon && !loading;
+    const [segmentsExpanded, setSegmentsExpanded] = useState(false);
+
+    useEffect(() => {
+        setSegmentsExpanded(false);
+    }, [selectedRoute?.route_id]);
 
     return (
         <aside className="sidebar">
@@ -139,6 +147,14 @@ export default function Sidebar({
                     value={destination}
                     onSelect={setDestination}
                     indicator="dest"
+                />
+
+                <div className="section-label" style={{ marginTop: 16 }}>Departure Time</div>
+                <input
+                    type="datetime-local"
+                    className="departure-input"
+                    value={departureTime || ''}
+                    onChange={(e) => setDepartureTime(e.target.value || null)}
                 />
 
                 {/* Route Profile Grid */}
@@ -179,7 +195,7 @@ export default function Sidebar({
                         <span className="weight-label">🌫️ AQI Exposure (β)</span>
                         <span className="weight-value aqi">{weights.beta.toFixed(2)}</span>
                     </div>
-                    <input type="range" className="time" min="0" max="1" step="0.05"
+                    <input type="range" className="aqi" min="0" max="1" step="0.05"
                         value={weights.beta}
                         onChange={e => setWeights({ ...weights, beta: +e.target.value })} />
                 </div>
@@ -209,6 +225,32 @@ export default function Sidebar({
                             isSelected={selectedRoute?.route_id === route.route_id}
                             onClick={() => setSelectedRoute(route)} />
                     ))}
+
+                    {selectedRoute && (
+                        <div className="route-detail-panel">
+                            <button
+                                type="button"
+                                className="route-detail-toggle"
+                                onClick={() => setSegmentsExpanded((open) => !open)}
+                            >
+                                <span>Route segments</span>
+                                <span className="route-detail-count">{selectedRoute.segments?.length || 0}</span>
+                                <span className={`chevron ${segmentsExpanded ? 'open' : ''}`}>›</span>
+                            </button>
+
+                            {segmentsExpanded && (
+                                <div className="segment-list">
+                                    {(selectedRoute.segments || []).length > 0 ? (
+                                        selectedRoute.segments.map((segment, index) => (
+                                            <SegmentRow key={`${segment.edge_id}-${index}`} segment={segment} />
+                                        ))
+                                    ) : (
+                                        <p className="segment-empty">Segment details unavailable for mock routes.</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
         </aside>
@@ -217,7 +259,7 @@ export default function Sidebar({
 
 function RouteCard({ route, isSelected, onClick }) {
     const cb = route.cost_breakdown;
-    const aqiColor = cb.avg_aqi < 50 ? 'var(--primary)' : cb.avg_aqi < 100 ? 'var(--accent-amber)' : 'var(--error)';
+    const avgAqiColor = cb.avg_aqi < 50 ? 'var(--primary)' : cb.avg_aqi < 100 ? 'var(--accent-amber)' : 'var(--error)';
 
     return (
         <div className={`result-card ${route.profile} ${isSelected ? 'selected' : ''}`} onClick={onClick}>
@@ -237,7 +279,7 @@ function RouteCard({ route, isSelected, onClick }) {
                     <div className="result-stat-label">Distance</div>
                 </div>
                 <div className="result-stat">
-                    <div className="result-stat-value" style={{ color: aqiColor }}>{cb.avg_aqi.toFixed(0)}</div>
+                    <div className="result-stat-value" style={{ color: avgAqiColor }}>{cb.avg_aqi.toFixed(0)}</div>
                     <div className="result-stat-label">Avg AQI</div>
                 </div>
                 <div className="result-stat">
@@ -246,6 +288,27 @@ function RouteCard({ route, isSelected, onClick }) {
                     </div>
                     <div className="result-stat-label">Hotspots</div>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+function SegmentRow({ segment }) {
+    const color = aqiColor(segment.aqi_value ?? 0);
+
+    return (
+        <div className="segment-row">
+            <div className="segment-road">
+                <span className="segment-road-name">{segment.road_name || 'Unnamed road'}</span>
+                {segment.risk_score > 0.5 && <span className="risk-indicator" title="Elevated accident risk">!</span>}
+            </div>
+            <div className="segment-meta">
+                <span>{Math.round(segment.length_m || 0)} m</span>
+                <span>{Math.round(segment.travel_time_s || 0)} s</span>
+                <span className="segment-aqi">
+                    <span className="aqi-dot" style={{ background: color }} />
+                    AQI {Math.round(segment.aqi_value || 0)}
+                </span>
             </div>
         </div>
     );
