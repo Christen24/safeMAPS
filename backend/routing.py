@@ -50,6 +50,30 @@ def get_profile_weights(profile: RouteProfile) -> tuple[float, float, float]:
     return profiles.get(profile, (0.4, 0.3, 0.3))
 
 
+def get_time_multiplier(road_type: str | None, hour: int | None) -> float:
+    """Return time-of-day risk multiplier for a road class."""
+    if hour is None or not 0 <= hour <= 23:
+        return 1.0
+
+    road_type_norm = (road_type or "").lower()
+    school_zone_types = {"school_zone", "school", "school_zone_link"}
+    trunk_types = {"trunk", "trunk_link", "motorway", "motorway_link"}
+    primary_secondary_types = {
+        "primary",
+        "primary_link",
+        "secondary",
+        "secondary_link",
+    }
+
+    if road_type_norm in school_zone_types and (8 <= hour < 10 or 15 <= hour < 17):
+        return 2.0
+    if road_type_norm in trunk_types and (hour >= 22 or hour < 6):
+        return 1.8
+    if road_type_norm in primary_secondary_types and (8 <= hour < 10 or 17 <= hour < 20):
+        return 1.4
+    return 1.0
+
+
 def compute_edge_cost(
     travel_time_s: float,
     aqi_value: float,
@@ -57,6 +81,7 @@ def compute_edge_cost(
     alpha: float,
     beta: float,
     gamma: float,
+    time_multiplier: float = 1.0,
 ) -> float:
     """
     Composite edge cost: C_e = α·T_e + β·AQI_exposure + γ·R_e
@@ -66,7 +91,7 @@ def compute_edge_cost(
     """
     travel_time_min = travel_time_s / 60.0
     aqi_exposure = (aqi_value / 500.0) * travel_time_min
-    risk_norm = min(risk_score / 10.0, 1.0)
+    risk_norm = min((risk_score * max(time_multiplier, 1.0)) / 10.0, 1.0)
     cost = alpha * travel_time_min + beta * aqi_exposure + gamma * risk_norm
     return max(cost, 0.001)
 
@@ -80,6 +105,7 @@ async def find_route(
     beta: float = 0.3,
     gamma: float = 0.3,
     profile: RouteProfile = RouteProfile.BALANCED,
+    hour: Optional[int] = None,
 ) -> Optional[RouteResponse]:
     """
     Run weighted A* from origin to destination.
@@ -105,6 +131,7 @@ async def find_route(
 
     nodes     = graph_cache.nodes
     adjacency = graph_cache.adjacency
+    edge_data = graph_cache.edge_data
 
     if start_id not in nodes or goal_id not in nodes:
         return None
@@ -135,9 +162,17 @@ async def find_route(
             # All lookups are now O(1) dict reads — no DB calls in the loop
             aqi_value  = graph_cache.get_aqi(edge_id)
             risk_score = graph_cache.get_risk(edge_id)
+            road_type = edge_data.get(edge_id, {}).get("road_type")
+            time_multiplier = get_time_multiplier(road_type, hour)
 
             edge_cost = compute_edge_cost(
-                travel_time_s, aqi_value, risk_score, alpha, beta, gamma
+                travel_time_s,
+                aqi_value,
+                risk_score,
+                alpha,
+                beta,
+                gamma,
+                time_multiplier,
             )
             tentative_g = g_score[current] + edge_cost
 
@@ -179,8 +214,6 @@ async def find_route(
     max_aqi = 0.0
     hotspots = 0
 
-    edge_data = graph_cache.edge_data
-
     for eid in path_edges:
         ed = edge_data.get(eid, {})
         length_m  = ed.get("length_m", 0)
@@ -190,9 +223,16 @@ async def find_route(
 
         aqi_val  = graph_cache.get_aqi(eid)
         risk_val = graph_cache.get_risk(eid)
+        time_multiplier = get_time_multiplier(ed.get("road_type"), hour)
 
         seg_cost = compute_edge_cost(
-            travel_time_s, aqi_val, risk_val, alpha, beta, gamma
+            travel_time_s,
+            aqi_val,
+            risk_val,
+            alpha,
+            beta,
+            gamma,
+            time_multiplier,
         )
 
         geom = ed.get("geometry", {"type": "LineString", "coordinates": []})
@@ -201,7 +241,7 @@ async def find_route(
 
         segments.append(SegmentInfo(
             edge_id=eid,
-            road_name=None,
+            road_name=ed.get("road_name"),
             length_m=length_m,
             travel_time_s=travel_time_s,
             aqi_value=aqi_val,
@@ -224,7 +264,14 @@ async def find_route(
         travel_time_cost=alpha * (total_time / 60.0),
         aqi_exposure_cost=beta * (total_aqi_weighted / 500.0),
         accident_risk_cost=gamma * sum(
-            graph_cache.get_risk(eid) for eid in path_edges
+            min(
+                (
+                    graph_cache.get_risk(eid)
+                    * get_time_multiplier(edge_data.get(eid, {}).get("road_type"), hour)
+                ) / 10.0,
+                1.0,
+            )
+            for eid in path_edges
         ),
         travel_time_minutes=total_time / 60.0,
         distance_km=total_distance / 1000.0,
