@@ -21,6 +21,7 @@ function App() {
     const [destination, setDestination] = useState({ lat: '', lon: '' });
     const [profile, setProfile] = useState('safest');
     const [weights, setWeights] = useState({ alpha: 0.20, beta: 0.10, gamma: 0.70 });
+    const [departureTime, setDepartureTime] = useState(null);
     const [routes, setRoutes] = useState([]);
     const [selectedRoute, setSelectedRoute] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -28,12 +29,14 @@ function App() {
     const [showAQI, setShowAQI] = useState(false);
     const [showBlackspots, setShowBlackspots] = useState(true);
     const [aqiData, setAqiData] = useState(null);
+    const [loadingAQI, setLoadingAQI] = useState(false);
     const [blackspotData, setBlackspotData] = useState(null);
     const [mapBounds, setMapBounds] = useState(null);
 
     // ── Bug 1 fix: Fetch AQI heatmap data on bounds change ──────────
     const fetchAQI = useCallback(async (bounds) => {
         if (!bounds) return;
+        setLoadingAQI(true);
         try {
             const p = new URLSearchParams({
                 min_lat: bounds.south, max_lat: bounds.north,
@@ -43,6 +46,8 @@ function App() {
             if (resp.ok) setAqiData(await resp.json());
         } catch (err) {
             console.warn('AQI fetch failed:', err.message);
+        } finally {
+            setLoadingAQI(false);
         }
     }, []);
 
@@ -71,7 +76,7 @@ function App() {
     }, []);
 
     useEffect(() => {
-        if (view === 'dashboard' || view === 'heatmaps') fetchBlackspots();
+        if (view === 'dashboard') fetchBlackspots();
     }, [view, fetchBlackspots]);
 
     // ── Bug 6 fix: Clear stale routes when coordinates change ───────
@@ -81,7 +86,7 @@ function App() {
         setRoutes([]);
         setSelectedRoute(null);
         setError(null);
-    }, [origin.lat, origin.lon, destination.lat, destination.lon]);
+    }, [origin.lat, origin.lon, destination.lat, destination.lon, departureTime]);
 
     // ── Bug 8 fix: Sync sliders when profile card is clicked ────────
     const handleProfileChange = useCallback((newProfile) => {
@@ -108,18 +113,21 @@ function App() {
         setError(null);
         try {
             if (isCustomWeight()) {
+                const body = {
+                    origin: { lat: +origin.lat, lon: +origin.lon },
+                    destination: { lat: +destination.lat, lon: +destination.lon },
+                    profile,
+                    alpha: weights.alpha,
+                    beta: weights.beta,
+                    gamma: weights.gamma,
+                    use_custom_weights: true,
+                };
+                if (departureTime) body.departure_time = departureTime;
+
                 const resp = await fetch(`${API_BASE}/route`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        origin: { lat: +origin.lat, lon: +origin.lon },
-                        destination: { lat: +destination.lat, lon: +destination.lon },
-                        profile,
-                        alpha: weights.alpha,
-                        beta: weights.beta,
-                        gamma: weights.gamma,
-                        use_custom_weights: true,
-                    }),
+                    body: JSON.stringify(body),
                 });
                 if (!resp.ok) throw new Error((await resp.json()).detail || 'Route computation failed');
                 const route = await resp.json();
@@ -130,6 +138,7 @@ function App() {
                     origin_lat: origin.lat, origin_lon: origin.lon,
                     dest_lat: destination.lat, dest_lon: destination.lon,
                 });
+                if (departureTime) params.set('departure_time', departureTime);
                 const resp = await fetch(`${API_BASE}/route/compare?${params}`);
                 if (!resp.ok) throw new Error((await resp.json()).detail || 'Route computation failed');
                 const data = await resp.json();
@@ -144,7 +153,7 @@ function App() {
         } finally {
             setLoading(false);
         }
-    }, [origin, destination, profile, weights, isCustomWeight]);
+    }, [origin, destination, profile, weights, departureTime, isCustomWeight]);
 
     const handleMapClick = useCallback((latlng) => {
         if (!origin.lat) {
@@ -202,6 +211,7 @@ function App() {
                     setOrigin={setOrigin} setDestination={setDestination}
                     profile={profile} setProfile={handleProfileChange}
                     weights={weights} setWeights={setWeights}
+                    departureTime={departureTime} setDepartureTime={setDepartureTime}
                     routes={routes} selectedRoute={selectedRoute}
                     setSelectedRoute={setSelectedRoute}
                     onCompute={computeRoute} onSwap={swapPoints}
@@ -213,6 +223,7 @@ function App() {
                     showAQI={showAQI} setShowAQI={handleShowAQI}
                     showBlackspots={showBlackspots} setShowBlackspots={setShowBlackspots}
                     aqiData={aqiData} blackspotData={blackspotData}
+                    loadingAQI={loadingAQI}
                     loading={loading} onMapClick={handleMapClick}
                     onBoundsChange={handleBoundsChange}
                 />
