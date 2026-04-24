@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import {
     MapContainer, TileLayer, Polyline, Marker, Popup,
     CircleMarker, useMapEvents, useMap,
@@ -34,7 +34,7 @@ const ROUTE_COLORS = {
     healthiest: '#f59e0b',
 };
 
-function aqiColor(aqi) {
+export function aqiColor(aqi) {
     if (aqi <= 50) return '#69f6b8';
     if (aqi <= 100) return '#f59e0b';
     if (aqi <= 150) return '#f97316';
@@ -43,14 +43,60 @@ function aqiColor(aqi) {
     return '#7f1d1d';
 }
 
+export function buildColoredSegments(segments = []) {
+    const runs = [];
+    let carryPoint = null;
+
+    segments.forEach((segment) => {
+        const coords = segment?.geometry?.coordinates;
+        if (!Array.isArray(coords) || coords.length === 0) return;
+
+        const color = aqiColor(segment.aqi_value ?? 0);
+        const leafletCoords = coords.map(([lon, lat]) => [lat, lon]);
+        const currentRun = runs[runs.length - 1];
+
+        if (currentRun?.color === color) {
+            const nextCoords = leafletCoords;
+            const last = currentRun.coords[currentRun.coords.length - 1];
+            const first = nextCoords[0];
+            if (last && first && last[0] === first[0] && last[1] === first[1]) {
+                currentRun.coords.push(...nextCoords.slice(1));
+            } else {
+                currentRun.coords.push(...nextCoords);
+            }
+        } else {
+            const runCoords = carryPoint ? [carryPoint, ...leafletCoords] : leafletCoords;
+            runs.push({ color, coords: runCoords });
+        }
+
+        carryPoint = leafletCoords[leafletCoords.length - 1] || carryPoint;
+    });
+
+    return runs.filter((run) => run.coords.length > 1);
+}
+
 function MapEvents({ onMapClick, onBoundsChange }) {
+    const debounceRef = useRef(null);
     const map = useMapEvents({
         click(e) { onMapClick(e.latlng); },
         moveend() {
-            const b = map.getBounds();
-            onBoundsChange({ north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() });
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            debounceRef.current = setTimeout(() => {
+                const b = map.getBounds();
+                onBoundsChange({ north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() });
+            }, 500);
         },
     });
+
+    useEffect(() => () => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+    }, []);
+
+    useEffect(() => {
+        const b = map.getBounds();
+        onBoundsChange({ north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() });
+    }, [map, onBoundsChange]);
+
     return null;
 }
 
@@ -65,13 +111,44 @@ function FitBounds({ route }) {
     return null;
 }
 
+function SegmentColoredRoute({ route, fallbackColor }) {
+    const flatCoords = route?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
+    const coloredRuns = buildColoredSegments(route?.segments);
+
+    if (coloredRuns.length === 0) {
+        return (
+            <Polyline
+                positions={flatCoords}
+                pathOptions={{
+                    color: fallbackColor,
+                    weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round',
+                }}
+            />
+        );
+    }
+
+    return coloredRuns.map((run, index) => (
+        <Polyline
+            key={`${route.route_id}-aqi-${index}`}
+            positions={run.coords}
+            pathOptions={{
+                color: run.color,
+                weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round',
+            }}
+        />
+    ));
+}
+
 export default function MapView({
     origin, destination, selectedRoute, routes,
     showAQI, setShowAQI, showBlackspots, setShowBlackspots,
-    aqiData, blackspotData, loading,
+    aqiData, blackspotData, loadingAQI, loading,
     onMapClick, onBoundsChange,
 }) {
     const toLL = (route) => route?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
+    const aqiFeatures = Array.isArray(aqiData)
+        ? aqiData
+        : aqiData?.features || [];
 
     return (
         <div className="map-container">
@@ -105,20 +182,22 @@ export default function MapView({
 
                 {/* Selected route (primary, bold) */}
                 {selectedRoute && (
-                    <Polyline positions={toLL(selectedRoute)}
-                        pathOptions={{
-                            color: ROUTE_COLORS[selectedRoute.profile] || '#c180ff',
-                            weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round',
-                        }} />
+                    <SegmentColoredRoute
+                        route={selectedRoute}
+                        fallbackColor={ROUTE_COLORS[selectedRoute.profile] || '#c180ff'}
+                    />
                 )}
 
                 {/* AQI Heatmap */}
-                {showAQI && aqiData?.features?.map((f, i) => (
-                    <CircleMarker key={`aqi-${i}`}
-                        center={[f.properties.center_lat, f.properties.center_lon]}
-                        radius={5}
-                        pathOptions={{ color: 'transparent', fillColor: aqiColor(f.properties.aqi), fillOpacity: 0.3 }} />
-                ))}
+                {showAQI && aqiFeatures.map((f, i) => {
+                    const props = f.properties || f;
+                    return (
+                        <CircleMarker key={`aqi-${i}`}
+                            center={[props.center_lat, props.center_lon]}
+                            radius={5}
+                            pathOptions={{ color: 'transparent', fillColor: aqiColor(props.aqi), fillOpacity: 0.3 }} />
+                    );
+                })}
 
                 {/* Blackspots */}
                 {showBlackspots && blackspotData?.features?.map((f, i) => {
@@ -140,7 +219,7 @@ export default function MapView({
 
             {/* Map Controls */}
             <div className="map-controls">
-                <button className={`map-control-btn ${showAQI ? 'active' : ''}`} onClick={() => setShowAQI(!showAQI)}>
+                <button className={`map-control-btn ${showAQI ? 'active' : ''} ${loadingAQI ? 'loading' : ''}`} onClick={() => setShowAQI(!showAQI)}>
                     🌫️ AQI Heatmap
                 </button>
                 <button className={`map-control-btn ${showBlackspots ? 'active' : ''}`} onClick={() => setShowBlackspots(!showBlackspots)}>
@@ -153,12 +232,13 @@ export default function MapView({
                 <div className="aqi-legend">
                     <h4>Air Quality Index</h4>
                     <div className="legend-items">
-                        {[['#69f6b8', 'Good'], ['#f59e0b', 'Moderate'], ['#f97316', 'Unhealthy'], ['#ff716c', 'V.Unhealthy'], ['#c180ff', 'Hazardous']].map(([c, l]) => (
+                        {[['#69f6b8', 'Good'], ['#f59e0b', 'Moderate'], ['#f97316', 'USG'], ['#ff716c', 'Unhealthy'], ['#c180ff', 'V.Unhealthy'], ['#7f1d1d', 'Hazardous']].map(([c, l]) => (
                             <div className="legend-item" key={l}>
                                 <div className="legend-swatch" style={{ background: c }} />{l}
                             </div>
                         ))}
                     </div>
+                    <p className="legend-note">Route colour = AQI along each segment</p>
                 </div>
             )}
 
