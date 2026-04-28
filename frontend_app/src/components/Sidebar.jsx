@@ -2,13 +2,12 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { aqiColor } from './MapView';
 
 const PROFILES = [
-    { id: 'fastest', label: 'Fastest', sub: 'Min. Time', icon: '⚡' },
-    { id: 'safest', label: 'Safest', sub: 'Max. Security', icon: '🛡️' },
-    { id: 'healthiest', label: 'Healthiest', sub: 'Low AQI', icon: '🫁' },
-    { id: 'balanced', label: 'Balanced', sub: 'Weighted', icon: '⚖️' },
+    { id: 'fastest',    label: 'Fastest',    sub: 'Min. Time',      icon: '⚡', color: 'var(--ice)'    },
+    { id: 'safest',     label: 'Safest',     sub: 'Max. Security',  icon: '🛡️', color: 'var(--acid)'   },
+    { id: 'healthiest', label: 'Healthiest', sub: 'Low AQI',        icon: '🫁', color: 'var(--amber)'  },
+    { id: 'balanced',   label: 'Balanced',   sub: 'Weighted',       icon: '⚖️', color: 'var(--violet)' },
 ];
 
-// ── Bug 7 fix: Nominatim geocoding for place name search ────────────
 async function geocode(query) {
     if (!query || query.length < 3) return [];
     try {
@@ -20,63 +19,49 @@ async function geocode(query) {
         if (!resp.ok) return [];
         const results = await resp.json();
         return results.map(({ lat, lon, display_name }) => ({ lat, lon, display_name }));
-    } catch {
-        return [];
-    }
+    } catch { return []; }
 }
 
 function PlaceInput({ placeholder, value, onSelect, indicator }) {
-    const [query, setQuery] = useState('');
-    const [suggestions, setSuggestions] = useState([]);
+    const [query, setQuery]               = useState('');
+    const [suggestions, setSuggestions]   = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
-    const [displayName, setDisplayName] = useState('');
+    const [displayName, setDisplayName]   = useState('');
     const debounceRef = useRef(null);
-    const wrapperRef = useRef(null);
+    const wrapperRef  = useRef(null);
 
-    // Close dropdown when clicking outside
     useEffect(() => {
-        const handler = (e) => {
-            if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        const h = (e) => {
+            if (wrapperRef.current && !wrapperRef.current.contains(e.target))
                 setShowSuggestions(false);
-            }
         };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
+        document.addEventListener('mousedown', h);
+        return () => document.removeEventListener('mousedown', h);
     }, []);
 
-    // Update display when value changes externally (e.g. map click)
     useEffect(() => {
-        if (value.lat && value.lon && !displayName) {
+        if (value.lat && value.lon && !displayName)
             setDisplayName(`${(+value.lat).toFixed(4)}, ${(+value.lon).toFixed(4)}`);
-        }
-        if (!value.lat && !value.lon) {
-            setDisplayName('');
-            setQuery('');
-        }
+        if (!value.lat && !value.lon) { setDisplayName(''); setQuery(''); }
     }, [value.lat, value.lon]);
 
-    const handleInputChange = useCallback((e) => {
+    const handleChange = useCallback((e) => {
         const q = e.target.value;
         setQuery(q);
         setDisplayName('');
-
         if (debounceRef.current) clearTimeout(debounceRef.current);
-
         if (q.length >= 3) {
             debounceRef.current = setTimeout(async () => {
-                const results = await geocode(q);
-                setSuggestions(results);
-                setShowSuggestions(results.length > 0);
+                const res = await geocode(q);
+                setSuggestions(res);
+                setShowSuggestions(res.length > 0);
             }, 300);
-        } else {
-            setSuggestions([]);
-            setShowSuggestions(false);
-        }
+        } else { setSuggestions([]); setShowSuggestions(false); }
     }, []);
 
     const handleSelect = useCallback((item) => {
-        const shortName = item.display_name.split(',').slice(0, 2).join(', ');
-        setDisplayName(shortName);
+        const short = item.display_name.split(',').slice(0, 2).join(', ');
+        setDisplayName(short);
         setQuery('');
         setSuggestions([]);
         setShowSuggestions(false);
@@ -85,12 +70,14 @@ function PlaceInput({ placeholder, value, onSelect, indicator }) {
 
     return (
         <div className="place-input-wrapper" ref={wrapperRef}>
-            <div className="input-group">
-                <span className={`indicator ${indicator}`} />
+            <div className="input-row">
+                <div className="input-pip">
+                    <span className={`pip-dot ${indicator}`} />
+                </div>
                 <input
                     placeholder={placeholder}
                     value={displayName || query}
-                    onChange={handleInputChange}
+                    onChange={handleChange}
                     onFocus={() => { if (suggestions.length) setShowSuggestions(true); }}
                 />
             </div>
@@ -123,42 +110,58 @@ export default function Sidebar({
     const canCompute = origin.lat && origin.lon && destination.lat && destination.lon && !loading;
     const [segmentsExpanded, setSegmentsExpanded] = useState(false);
 
-    useEffect(() => {
-        setSegmentsExpanded(false);
-    }, [selectedRoute?.route_id]);
+    useEffect(() => { setSegmentsExpanded(false); }, [selectedRoute?.route_id]);
 
     return (
         <aside className="sidebar">
-            {/* Route Input */}
-            <div className="route-input-section">
-                <div className="section-label">Route</div>
 
+            {/* ── Route Input ── */}
+            <div className="section-header">
+                <span className="section-label">Route Input</span>
+            </div>
+
+            <div className="route-input-section">
                 <PlaceInput
-                    placeholder="🔍 Search origin (e.g. Indiranagar)"
+                    placeholder="Search origin…"
                     value={origin}
                     onSelect={setOrigin}
                     indicator="origin"
                 />
 
-                <button className="swap-btn" onClick={onSwap} title="Swap origin & destination">⇅</button>
+                <div className="input-connector">
+                    <div className="connector-line" />
+                    <button className="swap-btn" onClick={onSwap} title="Swap">⇅</button>
+                    <div className="connector-line" />
+                </div>
 
                 <PlaceInput
-                    placeholder="🔍 Search destination (e.g. Koramangala)"
+                    placeholder="Search destination…"
                     value={destination}
                     onSelect={setDestination}
                     indicator="dest"
                 />
 
-                <div className="section-label" style={{ marginTop: 16 }}>Departure Time</div>
-                <input
-                    type="datetime-local"
-                    className="departure-input"
-                    value={departureTime || ''}
-                    onChange={(e) => setDepartureTime(e.target.value || null)}
-                />
+                {/* Departure time */}
+                <div className="departure-row" style={{ marginTop: 8 }}>
+                    <span className="departure-label">DEPART</span>
+                    <input
+                        type="datetime-local"
+                        className="departure-input"
+                        value={departureTime || ''}
+                        onChange={(e) => setDepartureTime(e.target.value || null)}
+                    />
+                </div>
 
-                {/* Route Profile Grid */}
-                <div className="section-label" style={{ marginTop: 16 }}>Route Profile</div>
+                <p className="hint">Tap map to pin · or search by place name</p>
+            </div>
+
+            {/* ── Profile ── */}
+            <div className="section-header">
+                <span className="section-label">Route Profile</span>
+                <span className="section-badge">{profile}</span>
+            </div>
+
+            <div className="profile-section">
                 <div className="profile-grid">
                     {PROFILES.map(p => (
                         <div
@@ -166,92 +169,93 @@ export default function Sidebar({
                             className={`profile-card ${p.id} ${profile === p.id ? 'active' : ''}`}
                             onClick={() => setProfile(p.id)}
                         >
-                            <div className="profile-icon">{p.icon}</div>
-                            <div className="profile-name">{p.label}</div>
-                            <div className="profile-sub">{p.sub}</div>
+                            <span className="profile-icon">{p.icon}</span>
+                            <span className="profile-name">{p.label}</span>
+                            <span className="profile-sub">{p.sub}</span>
                         </div>
                     ))}
                 </div>
-
-                <p className="hint">💡 Click on the map or search by place name</p>
             </div>
 
-            {/* Cost Weights */}
+            {/* ── Weights ── */}
+            <div className="section-header">
+                <span className="section-label">Cost Weights α β γ</span>
+            </div>
+
             <div className="weights-section">
-                <div className="section-label">Cost Weights (α, β, γ)</div>
-
-                <div className="weight-row">
-                    <div className="weight-header">
-                        <span className="weight-label">⏱️ Travel Time (α)</span>
-                        <span className="weight-value time">{weights.alpha.toFixed(2)}</span>
+                {[
+                    { key: 'alpha', label: '⏱ Travel Time (α)', cls: 'time',  colorCls: 'time'  },
+                    { key: 'beta',  label: '🌫 AQI Exposure (β)', cls: 'aqi',  colorCls: 'aqi'   },
+                    { key: 'gamma', label: '⚠ Accident Risk (γ)', cls: 'risk', colorCls: 'risk'  },
+                ].map(({ key, label, cls }) => (
+                    <div className="weight-row" key={key}>
+                        <div className="weight-header">
+                            <span className="weight-label">{label}</span>
+                            <span className={`weight-value ${cls}`}>{weights[key].toFixed(2)}</span>
+                        </div>
+                        <input
+                            type="range"
+                            className={cls}
+                            min="0" max="1" step="0.05"
+                            value={weights[key]}
+                            onChange={e => setWeights({ ...weights, [key]: +e.target.value })}
+                        />
                     </div>
-                    <input type="range" className="time" min="0" max="1" step="0.05"
-                        value={weights.alpha}
-                        onChange={e => setWeights({ ...weights, alpha: +e.target.value })} />
-                </div>
-
-                <div className="weight-row">
-                    <div className="weight-header">
-                        <span className="weight-label">🌫️ AQI Exposure (β)</span>
-                        <span className="weight-value aqi">{weights.beta.toFixed(2)}</span>
-                    </div>
-                    <input type="range" className="aqi" min="0" max="1" step="0.05"
-                        value={weights.beta}
-                        onChange={e => setWeights({ ...weights, beta: +e.target.value })} />
-                </div>
-
-                <div className="weight-row">
-                    <div className="weight-header">
-                        <span className="weight-label">⚠️ Accident Risk (γ)</span>
-                        <span className="weight-value risk">{weights.gamma.toFixed(2)}</span>
-                    </div>
-                    <input type="range" className="risk" min="0" max="1" step="0.05"
-                        value={weights.gamma}
-                        onChange={e => setWeights({ ...weights, gamma: +e.target.value })} />
-                </div>
+                ))}
 
                 <button className="cta-btn" onClick={onCompute} disabled={!canCompute}>
-                    {loading ? '⏳ Computing...' : '🔍 Compute Safe Route'}
+                    <span>{loading ? '· COMPUTING ·' : '▶ COMPUTE SAFE ROUTE'}</span>
                 </button>
-                {error && <p className="error-text">{error}</p>}
+
+                {error && <p className="error-text">⚠ {error}</p>}
             </div>
 
-            {/* Route Results */}
+            {/* ── Results ── */}
             {routes.length > 0 && (
-                <div className="results-section">
-                    <div className="section-label">Route Comparison · {routes.length} alternative{routes.length > 1 ? 's' : ''}</div>
-                    {routes.map(route => (
-                        <RouteCard key={route.route_id} route={route}
-                            isSelected={selectedRoute?.route_id === route.route_id}
-                            onClick={() => setSelectedRoute(route)} />
-                    ))}
+                <>
+                    <div className="section-header">
+                        <span className="section-label">Route Analysis</span>
+                        <span className="section-badge">{routes.length} paths</span>
+                    </div>
 
-                    {selectedRoute && (
-                        <div className="route-detail-panel">
-                            <button
-                                type="button"
-                                className="route-detail-toggle"
-                                onClick={() => setSegmentsExpanded((open) => !open)}
-                            >
-                                <span>Route segments</span>
-                                <span className="route-detail-count">{selectedRoute.segments?.length || 0}</span>
-                                <span className={`chevron ${segmentsExpanded ? 'open' : ''}`}>›</span>
-                            </button>
+                    <div className="results-section">
+                        {routes.map(route => (
+                            <RouteCard
+                                key={route.route_id}
+                                route={route}
+                                isSelected={selectedRoute?.route_id === route.route_id}
+                                onClick={() => setSelectedRoute(route)}
+                            />
+                        ))}
 
-                            {segmentsExpanded && (
-                                <div className="segment-list">
-                                    {(selectedRoute.segments || []).length > 0 ? (
-                                        selectedRoute.segments.map((segment, index) => (
-                                            <SegmentRow key={`${segment.edge_id}-${index}`} segment={segment} />
-                                        ))
-                                    ) : (
-                                        <p className="segment-empty">Segment details unavailable for mock routes.</p>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
+                        {selectedRoute && (
+                            <div className="route-detail-panel">
+                                <button
+                                    type="button"
+                                    className="route-detail-toggle"
+                                    onClick={() => setSegmentsExpanded(v => !v)}
+                                >
+                                    <span>Segment detail</span>
+                                    <span className="route-detail-count">
+                                        {selectedRoute.segments?.length || 0} segs
+                                    </span>
+                                    <span className={`chevron ${segmentsExpanded ? 'open' : ''}`}>›</span>
+                                </button>
+
+                                {segmentsExpanded && (
+                                    <div className="segment-list">
+                                        {(selectedRoute.segments || []).length > 0
+                                            ? selectedRoute.segments.map((seg, i) => (
+                                                <SegmentRow key={`${seg.edge_id}-${i}`} segment={seg} />
+                                            ))
+                                            : <p className="segment-empty">No segment data for mock routes.</p>
+                                        }
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </>
             )}
         </aside>
     );
@@ -259,34 +263,50 @@ export default function Sidebar({
 
 function RouteCard({ route, isSelected, onClick }) {
     const cb = route.cost_breakdown;
-    const avgAqiColor = cb.avg_aqi < 50 ? 'var(--primary)' : cb.avg_aqi < 100 ? 'var(--accent-amber)' : 'var(--error)';
+    const aqiCol = cb.avg_aqi < 50 ? 'var(--acid)' : cb.avg_aqi < 100 ? 'var(--amber)' : 'var(--infra)';
+    const profileColor = {
+        fastest: 'var(--ice)', safest: 'var(--acid)',
+        healthiest: 'var(--amber)', balanced: 'var(--violet)',
+    }[route.profile] || 'var(--text-primary)';
+    const profileIcon = { fastest: '⚡', safest: '🛡️', healthiest: '🫁', balanced: '⚖️' }[route.profile] || '';
 
     return (
-        <div className={`result-card ${route.profile} ${isSelected ? 'selected' : ''}`} onClick={onClick}>
+        <div
+            className={`result-card ${route.profile} ${isSelected ? 'selected' : ''}`}
+            onClick={onClick}
+        >
             <div className="result-header">
-                <span className="result-profile-name" style={{ color: getProfileColor(route.profile) }}>
-                    {getProfileIcon(route.profile)} {route.profile}
+                <span className="result-profile-name" style={{ color: profileColor }}>
+                    {profileIcon} {route.profile.toUpperCase()}
                 </span>
-                <span className="result-score">{cb.total_cost.toFixed(1)} cost</span>
+                <span className="result-score">{cb.total_cost.toFixed(2)}</span>
             </div>
+
             <div className="result-stats">
                 <div className="result-stat">
-                    <div className="result-stat-value" style={{ color: 'var(--secondary)' }}>{cb.travel_time_minutes.toFixed(0)}m</div>
-                    <div className="result-stat-label">Time</div>
+                    <span className="result-stat-value" style={{ color: 'var(--ice)' }}>
+                        {cb.travel_time_minutes.toFixed(0)}m
+                    </span>
+                    <span className="result-stat-label">time</span>
                 </div>
                 <div className="result-stat">
-                    <div className="result-stat-value">{cb.distance_km.toFixed(1)}km</div>
-                    <div className="result-stat-label">Distance</div>
+                    <span className="result-stat-value">{cb.distance_km.toFixed(1)}</span>
+                    <span className="result-stat-label">km</span>
                 </div>
                 <div className="result-stat">
-                    <div className="result-stat-value" style={{ color: avgAqiColor }}>{cb.avg_aqi.toFixed(0)}</div>
-                    <div className="result-stat-label">Avg AQI</div>
+                    <span className="result-stat-value" style={{ color: aqiCol }}>
+                        {cb.avg_aqi.toFixed(0)}
+                    </span>
+                    <span className="result-stat-label">AQI</span>
                 </div>
                 <div className="result-stat">
-                    <div className="result-stat-value" style={{ color: cb.accident_hotspots_passed > 0 ? 'var(--error)' : 'var(--primary)' }}>
+                    <span
+                        className="result-stat-value"
+                        style={{ color: cb.accident_hotspots_passed > 0 ? 'var(--infra)' : 'var(--acid)' }}
+                    >
                         {cb.accident_hotspots_passed}
-                    </div>
-                    <div className="result-stat-label">Hotspots</div>
+                    </span>
+                    <span className="result-stat-label">spots</span>
                 </div>
             </div>
         </div>
@@ -295,12 +315,13 @@ function RouteCard({ route, isSelected, onClick }) {
 
 function SegmentRow({ segment }) {
     const color = aqiColor(segment.aqi_value ?? 0);
-
     return (
         <div className="segment-row">
             <div className="segment-road">
                 <span className="segment-road-name">{segment.road_name || 'Unnamed road'}</span>
-                {segment.risk_score > 0.5 && <span className="risk-indicator" title="Elevated accident risk">!</span>}
+                {segment.risk_score > 0.5 && (
+                    <span className="risk-indicator" title="Elevated accident risk">!</span>
+                )}
             </div>
             <div className="segment-meta">
                 <span>{Math.round(segment.length_m || 0)} m</span>
@@ -312,12 +333,4 @@ function SegmentRow({ segment }) {
             </div>
         </div>
     );
-}
-
-function getProfileColor(p) {
-    return { fastest: 'var(--secondary)', safest: 'var(--primary)', healthiest: 'var(--accent-amber)', balanced: 'var(--tertiary)' }[p] || 'var(--on-surface)';
-}
-
-function getProfileIcon(p) {
-    return { fastest: '⚡', safest: '🛡️', healthiest: '🫁', balanced: '⚖️' }[p] || '';
 }
