@@ -2,23 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 
 const API_BASE = '/api';
 
-// ── Session identity ──────────────────────────────────────────────────
-// Generate a UUID on first load, persist in localStorage.
-// Sent as X-Session-ID on every request to identify the user
-// without requiring login.
 function getOrCreateSessionId() {
     const key = 'safemaps_session_id';
     let id = localStorage.getItem(key);
-    if (!id) {
-        id = crypto.randomUUID();
-        localStorage.setItem(key, id);
-    }
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem(key, id); }
     return id;
 }
 
-const SESSION_ID = getOrCreateSessionId();
+export const SESSION_ID = getOrCreateSessionId();
 
-// ── API helpers ───────────────────────────────────────────────────────
 async function fetchGreenScore() {
     const resp = await fetch(`${API_BASE}/user/green-score`, {
         headers: { 'X-Session-ID': SESSION_ID },
@@ -35,20 +27,19 @@ async function fetchTripHistory() {
     return resp.json();
 }
 
-// ── Score gauge ───────────────────────────────────────────────────────
+// ── Score gauge ───────────────────────────────────────────────
 function ScoreGauge({ score }) {
-    const radius   = 80;
-    const stroke   = 12;
-    const cx       = 100;
-    const cy       = 100;
-    const normalised = Math.min(100, Math.max(0, score));
-    const circumference = Math.PI * radius;     // half-circle arc length
-    const offset = circumference * (1 - normalised / 100);
+    const radius      = 80;
+    const stroke      = 10;
+    const cx = 100, cy = 100;
+    const norm        = Math.min(100, Math.max(0, score));
+    const circumference = Math.PI * radius;
+    const offset      = circumference * (1 - norm / 100);
 
-    const color = score >= 80 ? '#69f6b8'
-                : score >= 60 ? '#f59e0b'
-                : score >= 40 ? '#f97316'
-                : '#ff716c';
+    const color = score >= 80 ? '#00ff88'
+                : score >= 60 ? '#ffb830'
+                : score >= 40 ? '#ff8c00'
+                : '#ff4560';
 
     return (
         <div className="gs-gauge-wrap">
@@ -56,29 +47,28 @@ function ScoreGauge({ score }) {
                 {/* Track */}
                 <path
                     d={`M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`}
-                    fill="none"
-                    stroke="rgba(255,255,255,0.08)"
-                    strokeWidth={stroke}
-                    strokeLinecap="round"
+                    fill="none" stroke="rgba(93,184,255,0.06)"
+                    strokeWidth={stroke} strokeLinecap="round"
                 />
                 {/* Fill */}
                 <path
                     d={`M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth={stroke}
-                    strokeLinecap="round"
+                    fill="none" stroke={color}
+                    strokeWidth={stroke} strokeLinecap="round"
                     strokeDasharray={circumference}
                     strokeDashoffset={offset}
-                    style={{ transition: 'stroke-dashoffset 1s ease, stroke 0.5s ease' }}
+                    style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1), stroke 0.5s ease' }}
+                    filter={`drop-shadow(0 0 6px ${color}60)`}
                 />
-                {/* Score text */}
-                <text x={cx} y={cy - 4} textAnchor="middle"
-                    fill={color} fontSize="36" fontWeight="700" fontFamily="inherit">
-                    {Math.round(normalised)}
+                {/* Score */}
+                <text x={cx} y={cy - 6} textAnchor="middle"
+                    fill={color} fontSize="38" fontWeight="700"
+                    fontFamily="JetBrains Mono, monospace">
+                    {Math.round(norm)}
                 </text>
-                <text x={cx} y={cy + 18} textAnchor="middle"
-                    fill="rgba(255,255,255,0.5)" fontSize="11" fontFamily="inherit">
+                <text x={cx} y={cy + 16} textAnchor="middle"
+                    fill="rgba(107,122,153,0.8)" fontSize="10"
+                    fontFamily="JetBrains Mono, monospace" letterSpacing="2">
                     / 100
                 </text>
             </svg>
@@ -86,13 +76,13 @@ function ScoreGauge({ score }) {
     );
 }
 
-// ── Stat card ─────────────────────────────────────────────────────────
+// ── Stat card ─────────────────────────────────────────────────
 function StatCard({ icon, label, value, unit, color }) {
     return (
         <div className="gs-stat-card">
             <span className="gs-stat-icon">{icon}</span>
             <div className="gs-stat-body">
-                <div className="gs-stat-value" style={{ color: color || 'var(--primary)' }}>
+                <div className="gs-stat-value" style={{ color: color || 'var(--acid)' }}>
                     {value}
                     {unit && <span className="gs-stat-unit"> {unit}</span>}
                 </div>
@@ -102,55 +92,42 @@ function StatCard({ icon, label, value, unit, color }) {
     );
 }
 
-// ── AQI colour helper ─────────────────────────────────────────────────
 function aqiColor(aqi) {
-    if (aqi <= 50)  return '#69f6b8';
-    if (aqi <= 100) return '#f59e0b';
-    if (aqi <= 150) return '#f97316';
-    return '#ff716c';
+    if (aqi <= 50)  return '#00ff88';
+    if (aqi <= 100) return '#ffb830';
+    if (aqi <= 150) return '#ff8c00';
+    return '#ff4560';
 }
 
-// ── Trip row ──────────────────────────────────────────────────────────
+// ── Trip row ──────────────────────────────────────────────────
 function TripRow({ trip }) {
-    const profileEmoji = {
-        balanced:   '⚖️',
-        fastest:    '⚡',
-        safest:     '🛡️',
-        healthiest: '🌿',
-    }[trip.profile] || '📍';
-
-    const date = new Date(trip.created_at);
-    const dateStr = date.toLocaleDateString('en-IN', {
+    const emoji = { balanced:'⚖️', fastest:'⚡', safest:'🛡️', healthiest:'🫁' }[trip.profile] || '◎';
+    const date  = new Date(trip.created_at);
+    const str   = date.toLocaleDateString('en-IN', {
         day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
     });
 
     return (
         <div className="gs-trip-row">
             <div className="gs-trip-left">
-                <span className="gs-trip-emoji">{profileEmoji}</span>
-                <div className="gs-trip-meta">
-                    <div className="gs-trip-profile">{trip.profile}</div>
-                    <div className="gs-trip-date">{dateStr}</div>
+                <span className="gs-trip-emoji">{emoji}</span>
+                <div>
+                    <div className="gs-trip-profile">{trip.profile.toUpperCase()}</div>
+                    <div className="gs-trip-date">{str}</div>
                 </div>
             </div>
             <div className="gs-trip-right">
-                <div className="gs-trip-stat">
-                    <span style={{ color: aqiColor(trip.avg_aqi) }}>
-                        AQI {trip.avg_aqi}
-                    </span>
-                </div>
-                <div className="gs-trip-stat">
-                    {trip.distance_km.toFixed(1)} km
-                </div>
-                <div className="gs-trip-score">
-                    +{trip.green_score_delta}
-                </div>
+                <span className="gs-trip-stat" style={{ color: aqiColor(trip.avg_aqi) }}>
+                    AQI {trip.avg_aqi}
+                </span>
+                <span className="gs-trip-stat">{trip.distance_km.toFixed(1)} km</span>
+                <span className="gs-trip-score">+{trip.green_score_delta}</span>
             </div>
         </div>
     );
 }
 
-// ── Mini bar chart (daily AQI exposure) ───────────────────────────────
+// ── Bar chart ─────────────────────────────────────────────────
 function MiniBar({ value, max, color }) {
     const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
     return (
@@ -162,8 +139,6 @@ function MiniBar({ value, max, color }) {
 
 function ExposureChart({ trips }) {
     if (!trips || trips.length === 0) return null;
-
-    // Group by day, average AQI per day
     const byDay = {};
     trips.forEach(t => {
         const day = t.created_at.slice(0, 10);
@@ -171,22 +146,17 @@ function ExposureChart({ trips }) {
         byDay[day].total += t.avg_aqi;
         byDay[day].count += 1;
     });
-
-    const days = Object.keys(byDay).sort().slice(-14);   // last 14 days
+    const days   = Object.keys(byDay).sort().slice(-14);
     const values = days.map(d => byDay[d].total / byDay[d].count);
     const maxVal = Math.max(...values, 50);
 
     return (
         <div className="gs-chart-section">
-            <div className="gs-section-title">14-day AQI exposure</div>
+            <div className="gs-section-title">14-Day AQI Exposure</div>
             <div className="gs-chart-bars">
                 {days.map((d, i) => (
                     <div key={d} className="gs-chart-col">
-                        <MiniBar
-                            value={values[i]}
-                            max={maxVal}
-                            color={aqiColor(values[i])}
-                        />
+                        <MiniBar value={values[i]} max={maxVal} color={aqiColor(values[i])} />
                         <div className="gs-chart-label">
                             {new Date(d).toLocaleDateString('en-IN', { day: 'numeric' })}
                         </div>
@@ -197,49 +167,38 @@ function ExposureChart({ trips }) {
     );
 }
 
-// ── Main component ────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────
 export default function GreenScore() {
-    const [scoreData, setScoreData]   = useState(null);
-    const [tripData, setTripData]     = useState(null);
-    const [loading, setLoading]       = useState(true);
-    const [error, setError]           = useState(null);
+    const [scoreData, setScoreData] = useState(null);
+    const [tripData,  setTripData]  = useState(null);
+    const [loading,   setLoading]   = useState(true);
+    const [error,     setError]     = useState(null);
 
     const load = useCallback(async () => {
-        setLoading(true);
-        setError(null);
+        setLoading(true); setError(null);
         try {
-            const [score, trips] = await Promise.all([
-                fetchGreenScore(),
-                fetchTripHistory(),
-            ]);
+            const [score, trips] = await Promise.all([fetchGreenScore(), fetchTripHistory()]);
             setScoreData(score);
             setTripData(trips);
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
+        } catch (err) { setError(err.message); }
+        finally { setLoading(false); }
     }, []);
 
     useEffect(() => { load(); }, [load]);
 
-    if (loading) {
-        return (
-            <div className="gs-loading">
-                <div className="loading-ring" />
-                <p>Loading your health report...</p>
-            </div>
-        );
-    }
+    if (loading) return (
+        <div className="gs-loading">
+            <div className="loading-ring" />
+            <p>Loading health report…</p>
+        </div>
+    );
 
-    if (error) {
-        return (
-            <div className="gs-error">
-                <p>⚠️ Could not load Green Score: {error}</p>
-                <button className="gs-retry-btn" onClick={load}>Retry</button>
-            </div>
-        );
-    }
+    if (error) return (
+        <div className="gs-error">
+            <p>⚠ {error}</p>
+            <button className="gs-retry-btn" onClick={load}>Retry</button>
+        </div>
+    );
 
     const s = scoreData;
     const monthLabel = s?.month
@@ -252,13 +211,13 @@ export default function GreenScore() {
             {/* Header */}
             <div className="gs-header">
                 <div>
-                    <h2 className="gs-title">🌿 My Health Report</h2>
-                    <p className="gs-month">{monthLabel}</p>
+                    <h2 className="gs-title">Health Intelligence</h2>
+                    <p className="gs-month">{monthLabel?.toUpperCase()}</p>
                 </div>
                 <button className="gs-refresh-btn" onClick={load}>↻ Refresh</button>
             </div>
 
-            {/* Score gauge + grade */}
+            {/* Score gauge */}
             <div className="gs-score-section">
                 <ScoreGauge score={s?.green_score ?? 0} />
                 <div className="gs-grade-wrap">
@@ -269,50 +228,24 @@ export default function GreenScore() {
 
             {/* Stat cards */}
             <div className="gs-stats-grid">
-                <StatCard
-                    icon="🛣️" label="Total distance"
-                    value={(s?.total_km ?? 0).toFixed(1)} unit="km"
-                    color="#699cff"
-                />
-                <StatCard
-                    icon="🌫️" label="AQI exposure saved"
-                    value={(s?.aqi_saved_total ?? 0).toFixed(0)} unit="AQI·min"
-                    color="#69f6b8"
-                />
-                <StatCard
-                    icon="🫁" label="PM2.5 avoided"
-                    value={(s?.pm25_ug_saved ?? 0).toFixed(0)} unit="µg"
-                    color="#f59e0b"
-                />
-                <StatCard
-                    icon="⚠️" label="Hotspots avoided"
-                    value={s?.hotspots_avoided ?? 0}
-                    color="#ff716c"
-                />
-                <StatCard
-                    icon="📍" label="Trips this month"
-                    value={s?.total_trips ?? 0}
-                    color="#c180ff"
-                />
-                <StatCard
-                    icon="⏱️" label="Time vs fastest"
-                    value={(s?.time_delta_min ?? 0) > 0
-                        ? `+${(s.time_delta_min).toFixed(0)}`
-                        : (s?.time_delta_min ?? 0).toFixed(0)}
-                    unit="min"
-                    color="var(--on-surface-variant)"
-                />
+                <StatCard icon="🛣️" label="Total Dist."     value={(s?.total_km ?? 0).toFixed(1)}         unit="km"      color="var(--ice)"    />
+                <StatCard icon="🌫️" label="AQI Saved"       value={(s?.aqi_saved_total ?? 0).toFixed(0)}   unit="AQI·min" color="var(--acid)"   />
+                <StatCard icon="🫁" label="PM2.5 Avoided"   value={(s?.pm25_ug_saved ?? 0).toFixed(0)}     unit="µg"      color="var(--amber)"  />
+                <StatCard icon="⚠️" label="Spots Avoided"   value={s?.hotspots_avoided ?? 0}                              color="var(--infra)"  />
+                <StatCard icon="◎"  label="Trips / Month"   value={s?.total_trips ?? 0}                                    color="var(--violet)" />
+                <StatCard icon="⏱️" label="Time vs Fastest" value={(s?.time_delta_min ?? 0) > 0 ? `+${(s.time_delta_min).toFixed(0)}` : (s?.time_delta_min ?? 0).toFixed(0)} unit="min" color="var(--text-secondary)" />
             </div>
 
-            {/* 14-day AQI exposure chart */}
+            {/* Chart */}
             <ExposureChart trips={tripData?.trips ?? []} />
 
             {/* Trip history */}
             <div className="gs-trips-section">
-                <div className="gs-section-title">Recent trips</div>
+                <div className="gs-section-title">Recent Trips</div>
                 {(tripData?.trips ?? []).length === 0 ? (
                     <div className="gs-no-trips">
-                        No trips recorded yet. Compute a route on the Dashboard to start tracking!
+                        No trips recorded yet.<br />
+                        Compute a route on the Dashboard to begin tracking.
                     </div>
                 ) : (
                     <div className="gs-trips-list">
@@ -324,6 +257,3 @@ export default function GreenScore() {
         </div>
     );
 }
-
-// ── Export session ID so App.jsx can pass it to trip recording ────────
-export { SESSION_ID };
