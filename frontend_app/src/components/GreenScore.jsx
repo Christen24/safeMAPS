@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 
 const API_BASE = '/api';
 
@@ -137,18 +137,21 @@ function MiniBar({ value, max, color }) {
     );
 }
 
-function ExposureChart({ trips }) {
+const ExposureChart = memo(function ExposureChart({ trips }) {
     if (!trips || trips.length === 0) return null;
-    const byDay = {};
-    trips.forEach(t => {
-        const day = t.created_at.slice(0, 10);
-        if (!byDay[day]) byDay[day] = { total: 0, count: 0 };
-        byDay[day].total += t.avg_aqi;
-        byDay[day].count += 1;
-    });
-    const days   = Object.keys(byDay).sort().slice(-14);
-    const values = days.map(d => byDay[d].total / byDay[d].count);
-    const maxVal = Math.max(...values, 50);
+    
+    const { days, values, maxVal } = useMemo(() => {
+        const byDay = {};
+        trips.forEach(t => {
+            const day = t.created_at.slice(0, 10);
+            if (!byDay[day]) byDay[day] = { total: 0, count: 0 };
+            byDay[day].total += t.avg_aqi;
+            byDay[day].count += 1;
+        });
+        const ds = Object.keys(byDay).sort().slice(-14);
+        const vs = ds.map(d => byDay[d].total / byDay[d].count);
+        return { days: ds, values: vs, maxVal: Math.max(...vs, 50) };
+    }, [trips]);
 
     return (
         <div className="gs-chart-section">
@@ -165,7 +168,7 @@ function ExposureChart({ trips }) {
             </div>
         </div>
     );
-}
+});
 
 // ── Main ──────────────────────────────────────────────────────
 export default function GreenScore() {
