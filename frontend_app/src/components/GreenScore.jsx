@@ -28,7 +28,7 @@ async function fetchTripHistory() {
 }
 
 // ── Score gauge ───────────────────────────────────────────────
-function ScoreGauge({ score }) {
+const ScoreGauge = memo(function ScoreGauge({ score }) {
     const radius      = 80;
     const stroke      = 10;
     const cx = 100, cy = 100;
@@ -74,7 +74,7 @@ function ScoreGauge({ score }) {
             </svg>
         </div>
     );
-}
+});
 
 // ── Stat card ─────────────────────────────────────────────────
 function StatCard({ icon, label, value, unit, color }) {
