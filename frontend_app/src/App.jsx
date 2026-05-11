@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import Sidebar from './components/Sidebar';
 import MapView from './components/MapView';
 import LandingPage from './components/LandingPage';
@@ -16,7 +16,7 @@ const PRESET_WEIGHTS = {
 };
 
 // ── Nav bar (extracted for reuse across views) ─────────────────
-function NavBar({ view, setView, handleShowAQI }) {
+const NavBar = memo(function NavBar({ view, setView, handleShowAQI }) {
     return (
         <div className="nav-bar">
             {/* Brand */}
@@ -63,7 +63,7 @@ function NavBar({ view, setView, handleShowAQI }) {
             </div>
         </div>
     );
-}
+});
 
 export default function App() {
     const [view, setView]                     = useState('landing');
