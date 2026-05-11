@@ -189,10 +189,10 @@ export default function MapView({
                 style={{ height: '100%', width: '100%' }}
                 zoomControl={true}
             >
-                {/* Tactical dark map tiles */}
+                {/* Tactical satellite map tiles */}
                 <TileLayer
-                    attribution='&copy; <a href="https://carto.com">CARTO</a>'
-                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                    attribution='&copy; <a href="https://www.esri.com/">Esri</a>'
+                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                 />
 
                 <MapEvents onMapClick={onMapClick} onBoundsChange={onBoundsChange} />
