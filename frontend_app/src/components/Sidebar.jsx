@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, memo } from 'react';
 import { aqiColor } from './MapView';
 
 const PROFILES = [
@@ -261,7 +261,7 @@ export default function Sidebar({
     );
 }
 
-function RouteCard({ route, isSelected, onClick }) {
+const RouteCard = memo(function RouteCard({ route, isSelected, onClick }) {
     const cb = route.cost_breakdown;
     const aqiCol = cb.avg_aqi < 50 ? 'var(--acid)' : cb.avg_aqi < 100 ? 'var(--amber)' : 'var(--infra)';
     const profileColor = {
@@ -311,9 +311,9 @@ function RouteCard({ route, isSelected, onClick }) {
             </div>
         </div>
     );
-}
+});
 
-function SegmentRow({ segment }) {
+const SegmentRow = memo(function SegmentRow({ segment }) {
     const color = aqiColor(segment.aqi_value ?? 0);
     return (
         <div className="segment-row">
@@ -333,4 +333,4 @@ function SegmentRow({ segment }) {
             </div>
         </div>
     );
-}
+});
