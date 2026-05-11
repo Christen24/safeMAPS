@@ -5,7 +5,8 @@
 
 -- Ensure extensions are available
 CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS pgrouting;
+-- pgrouting is optional — SafeMAPS uses its own Python A* engine
+-- CREATE EXTENSION IF NOT EXISTS pgrouting;
 
 -- ============================================================
 -- 1. Road Network (from OpenStreetMap)
