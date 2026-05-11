@@ -100,7 +100,7 @@ function aqiColor(aqi) {
 }
 
 // ── Trip row ──────────────────────────────────────────────────
-function TripRow({ trip }) {
+const TripRow = memo(function TripRow({ trip }) {
     const emoji = { balanced:'⚖️', fastest:'⚡', safest:'🛡️', healthiest:'🫁' }[trip.profile] || '◎';
     const date  = new Date(trip.created_at);
     const str   = date.toLocaleDateString('en-IN', {
@@ -125,7 +125,7 @@ function TripRow({ trip }) {
             </div>
         </div>
     );
-}
+});
 
 // ── Bar chart ─────────────────────────────────────────────────
 function MiniBar({ value, max, color }) {
