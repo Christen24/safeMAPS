@@ -22,7 +22,7 @@ async function geocode(query) {
     } catch { return []; }
 }
 
-function PlaceInput({ placeholder, value, onSelect, indicator }) {
+const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indicator }) {
     const [query, setQuery]               = useState('');
     const [suggestions, setSuggestions]   = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
@@ -97,7 +97,7 @@ function PlaceInput({ placeholder, value, onSelect, indicator }) {
             )}
         </div>
     );
-}
+});
 
 export default function Sidebar({
     origin, destination, setOrigin, setDestination,
