@@ -1,4 +1,6 @@
-export default function LandingPage({ onStart }) {
+import { memo } from 'react';
+
+const LandingPage = memo(function LandingPage({ onStart }) {
     return (
         <div className="app landing-mode">
             {/* Hero */}
@@ -110,4 +112,6 @@ export default function LandingPage({ onStart }) {
             </div>
         </div>
     );
-}
+});
+
+export default LandingPage;
