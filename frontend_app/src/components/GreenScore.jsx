@@ -77,7 +77,7 @@ const ScoreGauge = memo(function ScoreGauge({ score }) {
 });
 
 // ── Stat card ─────────────────────────────────────────────────
-function StatCard({ icon, label, value, unit, color }) {
+const StatCard = memo(function StatCard({ icon, label, value, unit, color }) {
     return (
         <div className="gs-stat-card">
             <span className="gs-stat-icon">{icon}</span>
@@ -90,7 +90,7 @@ function StatCard({ icon, label, value, unit, color }) {
             </div>
         </div>
     );
-}
+});
 
 function aqiColor(aqi) {
     if (aqi <= 50)  return '#00ff88';
