@@ -1,5 +1,44 @@
 import { memo } from 'react';
 
+const FEATURES = [
+    {
+        n: '01',
+        icon: '🌫️',
+        title: 'Live Air Quality',
+        desc: 'Real-time PM2.5 and AQI data from 10+ Bangalore stations, interpolated across a 100m grid. Routes avoid prolonged exposure zones.',
+    },
+    {
+        n: '02',
+        icon: '🛡️',
+        title: 'Accident Avoidance',
+        desc: 'Historical blackspot data from Bangalore Traffic Police mapped to road segments. Risk doubles near school zones at drop-off times.',
+    },
+    {
+        n: '03',
+        icon: '⚡',
+        title: 'Multi-Profile A*',
+        desc: 'Four concurrent route profiles computed in parallel — Fastest, Safest, Healthiest, Balanced. Choose or blend with custom α β γ weights.',
+    },
+    {
+        n: '04',
+        icon: '🧠',
+        title: 'AQI Forecasting',
+        desc: 'LSTM model trained on historical readings predicts air quality 30 minutes ahead, so future departures route with predicted conditions.',
+    },
+    {
+        n: '05',
+        icon: '🌿',
+        title: 'Green Score',
+        desc: 'Monthly health report tracking pollutants avoided, hotspots skirted, and PM2.5 saved versus always taking the fastest route.',
+    },
+    {
+        n: '06',
+        icon: '⏱️',
+        title: 'Departure Time',
+        desc: 'Set a future departure and the router applies time-of-day risk multipliers — peak hour corridors, overnight truck lanes, school zones.',
+    },
+];
+
 const LandingPage = memo(function LandingPage({ onStart }) {
     return (
         <div className="app landing-mode">
@@ -59,44 +98,7 @@ const LandingPage = memo(function LandingPage({ onStart }) {
             <div className="features-section">
                 <div className="features-title">System Capabilities</div>
                 <div className="features-grid">
-                    {[
-                        {
-                            n: '01',
-                            icon: '🌫️',
-                            title: 'Live Air Quality',
-                            desc: 'Real-time PM2.5 and AQI data from 10+ Bangalore stations, interpolated across a 100m grid. Routes avoid prolonged exposure zones.',
-                        },
-                        {
-                            n: '02',
-                            icon: '🛡️',
-                            title: 'Accident Avoidance',
-                            desc: 'Historical blackspot data from Bangalore Traffic Police mapped to road segments. Risk doubles near school zones at drop-off times.',
-                        },
-                        {
-                            n: '03',
-                            icon: '⚡',
-                            title: 'Multi-Profile A*',
-                            desc: 'Four concurrent route profiles computed in parallel — Fastest, Safest, Healthiest, Balanced. Choose or blend with custom α β γ weights.',
-                        },
-                        {
-                            n: '04',
-                            icon: '🧠',
-                            title: 'AQI Forecasting',
-                            desc: 'LSTM model trained on historical readings predicts air quality 30 minutes ahead, so future departures route with predicted conditions.',
-                        },
-                        {
-                            n: '05',
-                            icon: '🌿',
-                            title: 'Green Score',
-                            desc: 'Monthly health report tracking pollutants avoided, hotspots skirted, and PM2.5 saved versus always taking the fastest route.',
-                        },
-                        {
-                            n: '06',
-                            icon: '⏱️',
-                            title: 'Departure Time',
-                            desc: 'Set a future departure and the router applies time-of-day risk multipliers — peak hour corridors, overnight truck lanes, school zones.',
-                        },
-                    ].map((f) => (
+                    {FEATURES.map((f) => (
                         <div className="feature-card fade-in-up" key={f.n}>
                             <span className="feature-number">{f.n}</span>
                             <span className="feature-icon">{f.icon}</span>
