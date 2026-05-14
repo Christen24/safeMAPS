@@ -1376,7 +1376,25 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   overflow: hidden;
 }
 
+/* Colored top accent per card */
 .feature-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  opacity: 0.5;
+  transition: opacity var(--ease-smooth);
+}
+
+.feature-card:nth-child(1)::before { background: var(--amber); }
+.feature-card:nth-child(2)::before { background: var(--infra); }
+.feature-card:nth-child(3)::before { background: var(--ice); }
+.feature-card:nth-child(4)::before { background: var(--acid); }
+.feature-card:nth-child(5)::before { background: var(--acid); }
+.feature-card:nth-child(6)::before { background: var(--violet); }
+
+/* Gradient shimmer overlay */
+.feature-card::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -1387,10 +1405,12 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 
 .feature-card:hover {
   border-color: var(--border-hi);
-  transform: translateY(-4px);
+  transform: translateY(-6px);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.4), 0 0 0 1px var(--acid-mute);
 }
 
 .feature-card:hover::before { opacity: 1; }
+.feature-card:hover::after { opacity: 1; }
 
 .feature-number {
   font-family: var(--font-mono);
