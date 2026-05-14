@@ -1147,15 +1147,21 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   overflow: hidden;
 }
 
-/* Radial glow behind hero text */
+/* Radial glow behind hero text — animated */
 .landing-hero::before {
   content: '';
   position: absolute;
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
-  width: 600px; height: 400px;
-  background: radial-gradient(ellipse at center, rgba(0,255,136,0.05) 0%, transparent 70%);
+  width: 800px; height: 500px;
+  background: radial-gradient(ellipse at center, rgba(0,255,136,0.08) 0%, rgba(0,255,136,0.02) 40%, transparent 70%);
   pointer-events: none;
+  animation: heroGlow 6s ease-in-out infinite;
+}
+
+@keyframes heroGlow {
+  0%, 100% { opacity: 0.7; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
 }
 
 /* Corner brackets */
@@ -1265,7 +1271,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   border-color: var(--border-med);
 }
 
-/* Stats strip */
+/* Stats strip — with animated top border */
 .landing-stats {
   display: flex;
   gap: 0;
@@ -1273,23 +1279,43 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   border: 1px solid var(--border-dim);
   border-radius: var(--r-sm);
   overflow: hidden;
+  position: relative;
+}
+
+.landing-stats::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--acid) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: statBorderSlide 4s linear infinite;
+}
+
+@keyframes statBorderSlide {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .landing-stat {
-  padding: 16px 28px;
+  padding: 18px 28px;
   text-align: center;
   border-right: 1px solid var(--border-dim);
   flex: 1;
+  transition: background var(--ease-snap);
 }
+
+.landing-stat:hover { background: rgba(0,255,136,0.03); }
 
 .landing-stat:last-child { border-right: none; }
 
 .landing-stat-value {
   font-family: var(--font-mono);
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   font-weight: 700;
   color: var(--acid);
   display: block;
+  text-shadow: 0 0 16px rgba(0,255,136,0.4);
 }
 
 .landing-stat-label {
