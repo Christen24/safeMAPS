@@ -715,6 +715,15 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   color: var(--text-tertiary);
 }
 
+.cta-btn:not(:disabled) {
+  animation: ctaReady 3s ease-in-out infinite;
+}
+
+@keyframes ctaReady {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 12px rgba(0,255,136,0.15); }
+}
+
 .cta-btn:disabled::before { display: none; }
 
 .error-text {
@@ -782,7 +791,22 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 .result-card.selected {
   background: var(--surface-2);
   border-color: var(--border-hi);
-  box-shadow: inset 0 0 0 1px var(--acid-mute), var(--acid-glow);
+  box-shadow: inset 0 0 0 1px var(--acid-mute), 0 4px 24px rgba(0,255,136,0.1);
+}
+
+/* Scan shimmer on selected card */
+.result-card.selected::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%; right: 0; bottom: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,255,136,0.04) 50%, transparent 100%);
+  animation: cardScan 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes cardScan {
+  0% { left: -100%; }
+  100% { left: 100%; }
 }
 
 .result-header {
