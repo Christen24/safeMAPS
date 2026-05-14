@@ -1569,8 +1569,10 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--acid), transparent);
-  opacity: 0.4;
+  background: linear-gradient(90deg, transparent 0%, var(--acid) 50%, transparent 100%);
+  background-size: 200% 100%;
+  opacity: 0.6;
+  animation: statBorderSlide 5s linear infinite;
 }
 
 .gs-gauge-wrap { flex-shrink: 0; }
@@ -1606,9 +1608,15 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   align-items: flex-start;
   gap: 8px;
   transition: var(--ease-snap);
+  cursor: default;
 }
 
-.gs-stat-card:hover { border-color: var(--border-med); }
+.gs-stat-card:hover {
+  border-color: var(--border-med);
+  background: var(--surface-1);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
 
 .gs-stat-icon { font-size: 1rem; flex-shrink: 0; }
 .gs-stat-body { min-width: 0; }
