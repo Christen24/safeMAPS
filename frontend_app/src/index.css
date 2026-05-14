@@ -557,26 +557,30 @@ body::before {
 .profile-card:hover {
   background: var(--surface-2);
   border-color: var(--border-med);
+  transform: translateY(-1px);
 }
 
 .profile-card:hover::after { opacity: 0.6; }
+.profile-card:hover .profile-icon { transform: scale(1.15); }
 
 .profile-card.active {
   background: var(--surface-2);
   border-color: var(--border-hi);
+  transform: translateY(-1px);
 }
 
 .profile-card.active::after { opacity: 1; }
 
-.profile-card.active.fastest    { border-color: rgba(93,184,255,0.3); box-shadow: 0 0 0 1px rgba(93,184,255,0.1); }
-.profile-card.active.safest     { border-color: var(--border-hi);    box-shadow: 0 0 0 1px var(--acid-mute); }
-.profile-card.active.healthiest { border-color: rgba(255,184,48,0.3); box-shadow: 0 0 0 1px var(--amber-mute); }
-.profile-card.active.balanced   { border-color: rgba(176,107,255,0.3); box-shadow: 0 0 0 1px rgba(176,107,255,0.1); }
+.profile-card.active.fastest    { border-color: rgba(93,184,255,0.3);  box-shadow: 0 0 0 1px rgba(93,184,255,0.1),  inset 0 1px 0 rgba(93,184,255,0.1); }
+.profile-card.active.safest     { border-color: var(--border-hi);       box-shadow: 0 0 0 1px var(--acid-mute),       inset 0 1px 0 rgba(0,255,136,0.1); }
+.profile-card.active.healthiest { border-color: rgba(255,184,48,0.3);   box-shadow: 0 0 0 1px var(--amber-mute),     inset 0 1px 0 rgba(255,184,48,0.1); }
+.profile-card.active.balanced   { border-color: rgba(176,107,255,0.3);  box-shadow: 0 0 0 1px rgba(176,107,255,0.1), inset 0 1px 0 rgba(176,107,255,0.1); }
 
 .profile-icon {
-  font-size: 1.1rem;
+  font-size: 1.2rem;
   margin-bottom: 4px;
   display: block;
+  transition: transform var(--ease-snap);
 }
 
 .profile-name {
