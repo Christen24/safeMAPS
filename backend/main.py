@@ -6,7 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
@@ -21,6 +21,34 @@ from routes.user import router as user_router        # Phase 6
 logger = logging.getLogger(__name__)
 
 
+# ── Admin security dependency ─────────────────────────────────────────
+
+async def require_admin_key(
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+):
+    """
+    FastAPI dependency that guards all /api/admin/* endpoints.
+
+    Rules:
+    - If ADMIN_API_KEY is not set in .env → 503 (admin disabled)
+    - If X-Admin-Key header is missing or wrong → 401
+    - If key matches → request proceeds
+    """
+    if not settings.admin_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Admin endpoints are disabled. "
+                "Set ADMIN_API_KEY in your .env to enable them."
+            ),
+        )
+    if x_admin_key != settings.admin_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing X-Admin-Key header.",
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.connect()
@@ -28,6 +56,12 @@ async def lifespan(app: FastAPI):
 
     node_count = await graph_cache.load(db)
     logger.info(f"Graph cache warmed: {node_count:,} nodes loaded.")
+
+    if not settings.admin_api_key:
+        logger.warning(
+            "ADMIN_API_KEY is not set — admin endpoints are disabled. "
+            "Add ADMIN_API_KEY=<secret> to your .env to enable them."
+        )
 
     scheduler = start_scheduler()
 
@@ -94,13 +128,13 @@ async def health_check():
     }
 
 
-@app.post("/api/admin/refresh-graph", tags=["Admin"])
+@app.post("/api/admin/refresh-graph", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def refresh_graph():
     node_count = await graph_cache.load(db)
     return {"status": "reloaded", "nodes": node_count, "edges": graph_cache.edge_count}
 
 
-@app.post("/api/admin/refresh-aqi", tags=["Admin"])
+@app.post("/api/admin/refresh-aqi", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def refresh_aqi():
     await graph_cache.refresh_aqi_costs(db)
     return {
@@ -110,14 +144,14 @@ async def refresh_aqi():
     }
 
 
-@app.post("/api/admin/run-aqi-scrape", tags=["Admin"])
+@app.post("/api/admin/run-aqi-scrape", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def run_aqi_scrape():
     from scheduler import run_aqi_cycle
     await run_aqi_cycle()
     return {"status": "complete", "edges_with_aqi": len(graph_cache.edge_aqi)}
 
 
-@app.post("/api/admin/run-traffic-scrape", tags=["Admin"])
+@app.post("/api/admin/run-traffic-scrape", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def run_traffic_scrape():
     from scheduler import run_traffic_cycle
     await run_traffic_cycle()
