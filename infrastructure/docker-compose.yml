@@ -21,8 +21,8 @@ services:
 
   backend:
     build:
-      context: ../backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     container_name: safemaps-backend
     environment:
       POSTGRES_HOST: postgis
@@ -32,11 +32,32 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
       WAQI_API_TOKEN: ${WAQI_API_TOKEN}
       TOMTOM_API_KEY: ${TOMTOM_API_KEY}
-    ports:
-      - "8000:8000"
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      CORS_ORIGINS: "http://localhost:3000,http://frontend"
+    # Internal only — accessed via nginx proxy, not directly from host
+    expose:
+      - "8000"
     depends_on:
       postgis:
         condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8000/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.frontend
+    container_name: safemaps-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:
