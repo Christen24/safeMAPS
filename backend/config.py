@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     waqi_api_token: Optional[str] = None
     tomtom_api_key: Optional[str] = None
 
+    # --- Admin Security ---
+    # Set ADMIN_API_KEY in .env. All /api/admin/* endpoints require the
+    # X-Admin-Key header to match this value. If unset, admin endpoints
+    # are disabled entirely (returns 503).
+    admin_api_key: Optional[str] = None
+
     # --- Server ---
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
