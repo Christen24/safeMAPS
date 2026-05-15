@@ -2,17 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for geospatial libs
+# Install system dependencies for geospatial libs + curl for healthcheck
 RUN apt-get update && apt-get install -y \
     libgeos-dev \
     libproj-dev \
     gdal-bin \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY backend/ .
 
 EXPOSE 8000
 
