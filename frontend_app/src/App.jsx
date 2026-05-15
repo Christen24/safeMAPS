@@ -82,6 +82,28 @@ export default function App() {
     const [loadingAQI, setLoadingAQI]         = useState(false);
     const [blackspotData, setBlackspotData]   = useState(null);
     const [mapBounds, setMapBounds]           = useState(null);
+    const [isOffline, setIsOffline]           = useState(false);
+    const [bannerDismissed, setBannerDismissed] = useState(false);
+
+    // ── Backend health check on mount ─────────────────────────────────
+    useEffect(() => {
+        let cancelled = false;
+        const checkHealth = async () => {
+            try {
+                const resp = await fetch(`${API_BASE.replace('/api', '')}/health`, {
+                    signal: AbortSignal.timeout(4000),
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!cancelled) {
+                    setIsOffline(!resp.ok || data.database === 'disconnected');
+                }
+            } catch {
+                if (!cancelled) setIsOffline(true);
+            }
+        };
+        checkHealth();
+        return () => { cancelled = true; };
+    }, []);
 
     const fetchAQI = useCallback(async (bounds) => {
         if (!bounds) return;
@@ -233,9 +255,14 @@ export default function App() {
         return <LandingPage onStart={() => setView('dashboard')} />;
     }
 
+    const showBanner = isOffline && !bannerDismissed;
+
     if (view === 'greenscore') {
         return (
             <div className="app" style={{ flexDirection: 'column' }}>
+                {showBanner && (
+                    <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
+                )}
                 <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} />
                 <div className="main-content gs-page" style={{ marginTop: 0 }}>
                     <GreenScore />
@@ -246,6 +273,9 @@ export default function App() {
 
     return (
         <div className="app" style={{ flexDirection: 'column' }}>
+            {showBanner && (
+                <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
+            )}
             <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} />
             <div className="main-content">
                 <Sidebar
@@ -273,6 +303,22 @@ export default function App() {
         </div>
     );
 }
+
+const OfflineBanner = memo(function OfflineBanner({ onDismiss }) {
+    return (
+        <div className="offline-banner" role="alert">
+            <span className="offline-banner-icon">⚠</span>
+            <span className="offline-banner-text">
+                Live data unavailable — showing demo routes.
+                Backend may still be starting up.
+            </span>
+            <button className="offline-banner-dismiss" onClick={onDismiss} aria-label="Dismiss">
+                ✕
+            </button>
+        </div>
+    );
+});
+
 
 function getMockRoutes() {
     const base = [
