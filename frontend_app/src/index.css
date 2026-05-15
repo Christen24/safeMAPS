@@ -1152,6 +1152,55 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 }
 
 /* ─── Scrollbar ─────────────────────────────────────────────── */
+/* --- Offline / Demo Banner ---------------------------------------- */
+.offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  background: linear-gradient(90deg, rgba(255,184,48,0.12) 0%, rgba(255,184,48,0.06) 100%);
+  border-bottom: 1px solid rgba(255,184,48,0.25);
+  flex-shrink: 0;
+  z-index: 1002;
+  animation: bannerSlideIn 0.3s ease-out forwards;
+}
+
+@keyframes bannerSlideIn {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+
+.offline-banner-icon {
+  font-size: 0.85rem;
+  color: var(--amber);
+  animation: pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.offline-banner-text {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  text-transform: uppercase;
+}
+
+.offline-banner-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--amber);
+  font-size: 0.7rem;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  transition: var(--ease-snap);
+  flex-shrink: 0;
+}
+
+.offline-banner-dismiss:hover { opacity: 1; background: rgba(255,184,48,0.1); }
+
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 2px; }
