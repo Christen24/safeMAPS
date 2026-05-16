@@ -33,6 +33,9 @@ services:
       WAQI_API_TOKEN: ${WAQI_API_TOKEN}
       TOMTOM_API_KEY: ${TOMTOM_API_KEY}
       ADMIN_API_KEY: ${ADMIN_API_KEY}
+      CPCB_API_KEY: ${CPCB_API_KEY}
+      WAZE_CCP_URL: ${WAZE_CCP_URL:-}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
       CORS_ORIGINS: "http://localhost:3000,http://frontend"
     # Internal only — accessed via nginx proxy, not directly from host
     expose:
