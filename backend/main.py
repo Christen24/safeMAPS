@@ -109,7 +109,7 @@ async def health_check():
 
     return {
         "status":    "ok",
-        "version":   "0.4.0",
+        "version":   "0.5.0",  # Phase 6: CPCB + Live Incidents
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "database":  db_status,
         "graph": {
