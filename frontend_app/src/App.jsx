@@ -78,6 +78,7 @@ export default function App() {
     const [error, setError]                   = useState(null);
     const [showAQI, setShowAQI]               = useState(false);
     const [showBlackspots, setShowBlackspots] = useState(true);
+    const [showIncidents, setShowIncidents]   = useState(true);
     const [aqiData, setAqiData]               = useState(null);
     const [loadingAQI, setLoadingAQI]         = useState(false);
     const [blackspotData, setBlackspotData]   = useState(null);
@@ -294,6 +295,7 @@ export default function App() {
                     selectedRoute={selectedRoute} routes={routes}
                     showAQI={showAQI} setShowAQI={handleShowAQI}
                     showBlackspots={showBlackspots} setShowBlackspots={setShowBlackspots}
+                    showIncidents={showIncidents} setShowIncidents={setShowIncidents}
                     aqiData={aqiData} blackspotData={blackspotData}
                     loadingAQI={loadingAQI}
                     loading={loading} onMapClick={handleMapClick}
