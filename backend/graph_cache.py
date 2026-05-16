@@ -68,8 +68,10 @@ class GraphCache:
         self.edge_data: dict[int, dict] = {}
         self.edge_aqi: dict[int, float] = {}
         self.edge_risk: dict[int, float] = {}
+        self.edge_incident: dict[int, float] = {}  # live incident cost overlay
         self._loaded_at: Optional[float] = None
         self._aqi_refreshed_at: Optional[float] = None
+        self._incident_refreshed_at: Optional[float] = None
 
     # ── Properties ────────────────────────────────────────────────────
 
@@ -96,6 +98,17 @@ class GraphCache:
         if self._aqi_refreshed_at is None:
             return float("inf")
         return time.monotonic() - self._aqi_refreshed_at
+
+    @property
+    def incident_age_seconds(self) -> float:
+        if self._incident_refreshed_at is None:
+            return float("inf")
+        return time.monotonic() - self._incident_refreshed_at
+
+    @property
+    def incident_count(self) -> int:
+        """Number of edges currently affected by live incidents."""
+        return len(self.edge_incident)
 
     # ── Full graph load (called once at startup) ───────────────────────
 
@@ -182,8 +195,9 @@ class GraphCache:
         self._loaded_at = time.monotonic()
 
         # Reset cost caches — will be filled by _prefetch_edge_costs
-        self.edge_aqi = {}
-        self.edge_risk = {}
+        self.edge_aqi      = {}
+        self.edge_risk     = {}
+        self.edge_incident = {}  # cleared on full reload; refreshed by Job 5
 
         await self._prefetch_edge_costs(db)
         return len(nodes)
@@ -293,6 +307,71 @@ class GraphCache:
                 f"Error: {exc}"
             )
 
+    # ── Incident cost refresh (called by scheduler every 10 min) ──────
+
+    async def refresh_incident_costs(self, db) -> None:
+        """
+        Re-fetch active incidents from live_incidents and map them to edges
+        within 200m. Same atomic-swap pattern as refresh_aqi_costs().
+
+        Cost per incident:
+            severity 1 (low)    → +2.0 edge cost units
+            severity 2 (medium) → +6.0 edge cost units
+            severity 3 (high)   → +10.0 edge cost units
+
+        Multiple incidents on one edge: costs sum, capped at 10.0.
+        Stale incidents (expires_at < NOW) are automatically excluded.
+        """
+        t0 = time.monotonic()
+        logger.info("[cache] Refreshing edge incident costs from live_incidents...")
+
+        SEVERITY_COST = {1: 2.0, 2: 6.0, 3: 10.0}
+
+        try:
+            rows = await db.fetch("""
+                SELECT
+                    e.id AS edge_id,
+                    COALESCE(SUM(
+                        CASE li.severity
+                            WHEN 3 THEN 10.0
+                            WHEN 2 THEN 6.0
+                            ELSE 2.0
+                        END
+                    ), 0.0) AS incident_cost
+                FROM road_segments e
+                JOIN live_incidents li
+                    ON ST_DWithin(
+                        e.geom::geography,
+                        li.geom::geography,
+                        200
+                    )
+                WHERE li.is_active = TRUE
+                  AND li.expires_at > NOW()
+                GROUP BY e.id;
+            """)
+
+            new_incidents: dict[int, float] = {}
+            for row in rows:
+                cost = min(float(row["incident_cost"]), 10.0)
+                if cost > 0:
+                    new_incidents[row["edge_id"]] = cost
+
+            # Atomic swap
+            self.edge_incident = new_incidents
+            self._incident_refreshed_at = time.monotonic()
+
+            elapsed = time.monotonic() - t0
+            logger.info(
+                f"[cache] Incident refresh complete in {elapsed:.1f}s "
+                f"({len(new_incidents)} edges affected by active incidents)."
+            )
+
+        except Exception as exc:
+            logger.warning(
+                f"[cache] Incident refresh failed — keeping previous values. "
+                f"Error: {exc}"
+            )
+
     # ── Phase 2: Speed patch (called by scheduler every 5 min) ────────
 
     def update_speeds(self, edge_speeds: dict[int, float]) -> None:
@@ -361,6 +440,10 @@ class GraphCache:
     def get_risk(self, edge_id: int) -> float:
         """Return cached risk score for an edge, defaulting to 0."""
         return self.edge_risk.get(edge_id, 0.0)
+
+    def get_incident(self, edge_id: int) -> float:
+        """Return live incident cost for an edge, defaulting to 0."""
+        return self.edge_incident.get(edge_id, 0.0)
 
 
 # Module-level singleton — import this everywhere
