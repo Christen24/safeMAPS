@@ -21,7 +21,12 @@ class Settings(BaseSettings):
     waqi_api_token: Optional[str] = None
     tomtom_api_key: Optional[str] = None
 
-    # --- Admin Security ---
+    # CPCB real-time AQI — data.gov.in
+    # Register at https://data.gov.in → search "CPCB Real Time Air Quality"
+    # Endpoint: https://api.data.gov.in/resource/3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69
+    cpcb_api_key: Optional[str] = None
+
+    # Admin Security ---
     # Set ADMIN_API_KEY in .env. All /api/admin/* endpoints require the
     # X-Admin-Key header to match this value. If unset, admin endpoints
     # are disabled entirely (returns 503).
