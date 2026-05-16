@@ -17,6 +17,7 @@ from routes.route import router as route_router
 from routes.aqi import router as aqi_router
 from routes.safety import router as safety_router
 from routes.user import router as user_router        # Phase 6
+from routes.incidents import router as incident_router  # Phase 7
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +92,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(route_router,  prefix="/api/route",  tags=["Routing"])
-app.include_router(aqi_router,    prefix="/api/aqi",    tags=["Air Quality"])
-app.include_router(safety_router, prefix="/api/safety", tags=["Safety"])
-app.include_router(user_router,   prefix="/api/user",   tags=["Green Score"])  # Phase 6
+app.include_router(route_router,    prefix="/api/route",     tags=["Routing"])
+app.include_router(aqi_router,      prefix="/api/aqi",       tags=["Air Quality"])
+app.include_router(safety_router,   prefix="/api/safety",    tags=["Safety"])
+app.include_router(user_router,     prefix="/api/user",      tags=["Green Score"])
+app.include_router(incident_router, prefix="/api/incidents", tags=["Live Incidents"])
 
 
 @app.get("/health", tags=["System"])
@@ -120,10 +122,16 @@ async def health_check():
             "edges_with_aqi": len(graph_cache.edge_aqi),
             "age_seconds":    round(graph_cache.aqi_age_seconds, 1),
         },
+        "incident_cache": {
+            "edges_with_incidents": graph_cache.incident_count,
+            "age_seconds":         round(graph_cache.incident_age_seconds, 1),
+        },
         "scheduler": {
-            "aqi_interval_minutes":     15,
-            "traffic_interval_minutes":  5,
-            "lstm_interval_minutes":    30,
+            "aqi_interval_minutes":      15,
+            "cpcb_interval_minutes":     15,
+            "traffic_interval_minutes":   5,
+            "lstm_interval_minutes":     30,
+            "incident_interval_minutes": 10,
         },
     }
 
@@ -156,3 +164,21 @@ async def run_traffic_scrape():
     from scheduler import run_traffic_cycle
     await run_traffic_cycle()
     return {"status": "complete", "edges": graph_cache.edge_count}
+
+
+@app.post("/api/admin/expire-incidents", tags=["Admin"], dependencies=[Depends(require_admin_key)])
+async def expire_incidents():
+    """Manually mark all stale incidents as inactive. Useful for demo resets."""
+    result = await db.execute("""
+        UPDATE live_incidents
+        SET is_active = FALSE
+        WHERE is_active = TRUE
+          AND expires_at < NOW();
+    """)
+    expired = int(result.split()[-1])
+    await graph_cache.refresh_incident_costs(db)
+    return {
+        "status":  "expired",
+        "expired": expired,
+        "active_edges": graph_cache.incident_count,
+    }
