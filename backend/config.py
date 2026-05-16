@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # Endpoint: https://api.data.gov.in/resource/3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69
     cpcb_api_key: Optional[str] = None
 
+    # Live incident sources (all optional — OSM Overpass needs no key)
+    # Waze CCP feed URL — register at https://developers.google.com/waze
+    waze_ccp_url: Optional[str] = None
+    # X/Twitter bearer token — https://developer.twitter.com (free tier: 1500 tweets/month)
+    x_bearer_token: Optional[str] = None
+
     # Admin Security ---
     # Set ADMIN_API_KEY in .env. All /api/admin/* endpoints require the
     # X-Admin-Key header to match this value. If unset, admin endpoints
