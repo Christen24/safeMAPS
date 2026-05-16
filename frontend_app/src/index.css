@@ -1037,6 +1037,71 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   border-color: var(--border-hi);
   animation: scanPulse 1s ease-in-out infinite;
 }
+/* --- Incident layer controls ------------------------------------ */
+.map-control-btn.incident-btn.active {
+  color: #f97316;
+  border-color: rgba(249,115,22,0.5);
+  background: rgba(249,115,22,0.1);
+}
+
+.incident-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: #f97316;
+  color: #0d1117;
+  font-size: 0.55rem;
+  font-weight: 700;
+  border-radius: 9px;
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}
+
+/* Incident legend in map overlay */
+.incident-legend {
+  position: absolute;
+  bottom: 130px;
+  right: 12px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  z-index: 800;
+  min-width: 140px;
+}
+
+.incident-legend h4 {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  margin: 0 0 6px 0;
+}
+
+.incident-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--text-secondary);
+}
+
+.incident-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+
 
 @keyframes scanPulse {
   0%, 100% { background: var(--glass-bg); }
