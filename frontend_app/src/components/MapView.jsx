@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
     MapContainer, TileLayer, Polyline, Marker,
     Popup, CircleMarker, useMapEvents, useMap,
@@ -33,6 +33,31 @@ function makeIcon(ring, fill) {
 
 const originIcon = makeIcon('#00ff88', '#00ff88');
 const destIcon   = makeIcon('#ff4560', '#ff4560');
+
+// ── Incident triangle icons ───────────────────────────────────
+// accident=orange-red, closure=red, waterlogging=blue, construction=amber, hazard=yellow
+const INCIDENT_COLORS = {
+    accident:     '#f97316',
+    closure:      '#ef4444',
+    waterlogging: '#3b82f6',
+    construction: '#f59e0b',
+    hazard:       '#eab308',
+};
+
+function makeTriangleIcon(color) {
+    return L.divIcon({
+        className: '',
+        html: `
+          <svg width="20" height="18" viewBox="0 0 20 18" xmlns="http://www.w3.org/2000/svg">
+            <polygon points="10,1 19,17 1,17" fill="${color}" fill-opacity="0.85"
+                     stroke="#0d1117" stroke-width="1.2"/>
+            <text x="10" y="14" text-anchor="middle" font-size="8" font-family="monospace"
+                  fill="#0d1117" font-weight="bold">⚠</text>
+          </svg>`,
+        iconSize:   [20, 18],
+        iconAnchor: [10, 18],
+    });
+}
 
 // ── Profile colours ───────────────────────────────────────────
 const PROFILE_COLORS = {
@@ -171,15 +196,39 @@ function SelectedRoute({ route }) {
     );
 }
 
-// ── Main MapView ──────────────────────────────────────────────
+// ── Main MapView ────────────────────────────────────────
+// Accepts showIncidents/setShowIncidents props from App.jsx
 export default function MapView({
     origin, destination, selectedRoute, routes,
     showAQI, setShowAQI, showBlackspots, setShowBlackspots,
+    showIncidents, setShowIncidents,
     aqiData, blackspotData, loadingAQI,
     loading, onMapClick, onBoundsChange,
 }) {
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
+
+    // ── Incident data fetch (every 10 min) ──────────────────────
+    const [incidentData, setIncidentData] = useState(null);
+    const [loadingIncidents, setLoadingIncidents] = useState(false);
+
+    const fetchIncidents = useCallback(async () => {
+        setLoadingIncidents(true);
+        try {
+            const resp = await fetch('/api/incidents/active?limit=300');
+            if (resp.ok) {
+                const data = await resp.json();
+                setIncidentData(data);
+            }
+        } catch { /* silently fail — incidents are supplementary */ }
+        finally { setLoadingIncidents(false); }
+    }, []);
+
+    useEffect(() => {
+        fetchIncidents();
+        const id = setInterval(fetchIncidents, 10 * 60 * 1000); // 10 min
+        return () => clearInterval(id);
+    }, [fetchIncidents]);
 
     return (
         <div className="map-container">
@@ -317,6 +366,47 @@ export default function MapView({
                         </CircleMarker>
                     );
                 })}
+
+                {/* Live incidents layer */}
+                {showIncidents && incidentData?.features?.map((f, i) => {
+                    const [lon, lat] = f.geometry.coordinates;
+                    const p = f.properties;
+                    const color = INCIDENT_COLORS[p.incident_type] || '#eab308';
+                    return (
+                        <Marker
+                            key={`inc-${i}`}
+                            position={[lat, lon]}
+                            icon={makeTriangleIcon(color)}
+                        >
+                            <Popup>
+                                <div style={{
+                                    fontFamily: 'JetBrains Mono, monospace',
+                                    fontSize: '11px',
+                                    background: '#090c14',
+                                    padding: '8px 10px',
+                                    borderRadius: '2px',
+                                    color: '#d8e0f0',
+                                    minWidth: '180px',
+                                }}>
+                                    <div style={{ color, marginBottom: 4, fontWeight: 700 }}>
+                                        ⚠ {p.incident_type?.toUpperCase()}
+                                    </div>
+                                    <div style={{ color: '#6b7a99', fontSize: '10px' }}>
+                                        SRC: {p.source?.toUpperCase()} &nbsp; SEV: {p.severity}/3
+                                    </div>
+                                    {p.description && (
+                                        <div style={{ marginTop: 4, fontSize: '10px', color: '#8892aa' }}>
+                                            {p.description.slice(0, 120)}
+                                        </div>
+                                    )}
+                                    <div style={{ marginTop: 4, fontSize: '9px', color: '#3d4a60' }}>
+                                        EXPIRES: {new Date(p.expires_at).toLocaleTimeString()}
+                                    </div>
+                                </div>
+                            </Popup>
+                        </Marker>
+                    );
+                })}
             </MapContainer>
 
             {/* ── Map controls ── */}
@@ -332,6 +422,15 @@ export default function MapView({
                     onClick={() => setShowBlackspots(!showBlackspots)}
                 >
                     ⚠ Blackspots
+                </button>
+                <button
+                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''} ${loadingIncidents ? 'loading' : ''}`}
+                    onClick={() => setShowIncidents(!showIncidents)}
+                >
+                    ▲ Live Incidents
+                    {incidentData?.total > 0 && (
+                        <span className="incident-badge">{incidentData.total}</span>
+                    )}
                 </button>
             </div>
 
