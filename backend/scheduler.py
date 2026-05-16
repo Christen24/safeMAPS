@@ -1,18 +1,24 @@
 """
 SafeMAPS — Background Scheduler
 
-Phase 5 addition: Job 3 — LSTM prediction refresh every 30 minutes.
-Calls lstm_trainer.predict_all() which runs inference for every station
-that has a trained model and writes results to aqi_predictions.
-The /api/aqi/predict endpoint reads from that table (< 10ms latency)
-instead of running inference on every HTTP request.
+Phase 6 additions: Jobs 4 and 5.
+
+Job 4 — CPCB cycle: re-runs only the CPCB scraper (not the full WAQI+merge)
+  every 15 minutes, offset by 7 min from the WAQI cycle so they don't
+  collide on DB writes. After both run, the grid update fires with the
+  freshest combined data.
+
+Job 5 — Incident cycle: scrapes OSM Overpass, Waze CCP, and @BlrCityTraffic
+  every 10 minutes, deduplicates, and refreshes edge_incident costs in the
+  graph cache. Incidents auto-expire after 2 hours if not refreshed.
 
 Job summary
 ────────────
   aqi_scrape       — every 15 min (first run: 2 min after startup)
   traffic_scrape   — every 5 min  (first run: 1 min after startup)
   lstm_predict     — every 30 min (first run: 5 min after startup)
-                     Skipped gracefully if no trained models exist yet.
+  cpcb_scrape      — every 15 min (first run: 9 min after startup, offset from WAQI)
+  incident_scrape  — every 10 min (first run: 3 min after startup)
 """
 
 import asyncio
@@ -79,12 +85,7 @@ async def run_traffic_cycle() -> None:
 async def run_lstm_predict_cycle() -> None:
     """
     Run LSTM inference for all trained stations and write results to
-    aqi_predictions. Skips gracefully if no .pt model files exist yet
-    (first 7+ days while data accumulates).
-
-    This runs every 30 minutes so that /api/aqi/predict can serve from
-    the table cache without ever blocking on PyTorch inference in the
-    HTTP request path.
+    aqi_predictions. Skips gracefully if no .pt model files exist yet.
     """
     logger.info("[scheduler] LSTM predict cycle starting...")
     try:
@@ -111,6 +112,109 @@ async def run_lstm_predict_cycle() -> None:
         )
     except Exception as exc:
         logger.warning(f"[scheduler] LSTM predict cycle failed: {exc}", exc_info=True)
+
+
+# ── Job 4: CPCB-only refresh ──────────────────────────────────────────
+
+async def run_cpcb_cycle() -> None:
+    """
+    Runs the CPCB scraper independently every 15 min, offset 7 min from
+    the WAQI cycle. Writes fresh CPCB readings to aqi_history and triggers
+    an AQI grid refresh so routing picks up the new data.
+    """
+    from database import db
+    from graph_cache import graph_cache
+
+    logger.info("[scheduler] CPCB scrape cycle starting...")
+    try:
+        import sys
+        from pathlib import Path
+        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        if str(pipeline_dir) not in sys.path:
+            sys.path.insert(0, str(pipeline_dir))
+
+        from config import settings
+        if not settings.cpcb_api_key:
+            logger.info("[scheduler] CPCB_API_KEY not set — skipping CPCB cycle.")
+            return
+
+        from cpcb_scraper import fetch_cpcb_stations
+        from aqi_scraper import insert_aqi_history, interpolate_aqi_to_grid
+
+        import asyncpg
+        from datetime import datetime, timezone
+
+        cpcb_stations = await fetch_cpcb_stations(settings.cpcb_api_key)
+        if not cpcb_stations:
+            logger.info("[scheduler] CPCB cycle: no stations returned.")
+            return
+
+        conn = await asyncpg.connect(
+            host=settings.postgres_host,
+            port=settings.postgres_port,
+            database=settings.postgres_db,
+            user=settings.postgres_user,
+            password=settings.postgres_password,
+        )
+        try:
+            now_utc = datetime.now(timezone.utc)
+            count = 0
+            for s in cpcb_stations:
+                if s.get("aqi") is None:
+                    continue
+                await conn.fetchval("""
+                    INSERT INTO aqi_stations (station_uid, name, geom)
+                    VALUES ($1, $2, ST_SetSRID(ST_MakePoint($3, $4), 4326))
+                    ON CONFLICT (station_uid) DO UPDATE SET name = EXCLUDED.name
+                    RETURNING id;
+                """, s["uid"], s["name"], s["lon"], s["lat"])
+                await insert_aqi_history(
+                    conn, s["uid"], s["name"], s["lat"], s["lon"],
+                    s, now_utc, source="cpcb",
+                )
+                count += 1
+
+            logger.info(f"[scheduler] CPCB cycle: {count} stations written.")
+            await interpolate_aqi_to_grid(conn)
+        finally:
+            await conn.close()
+
+        await graph_cache.refresh_aqi_costs(db)
+        logger.info("[scheduler] CPCB cycle complete — edge AQI costs updated.")
+
+    except Exception as exc:
+        logger.warning(f"[scheduler] CPCB cycle failed: {exc}", exc_info=True)
+
+
+# ── Job 5: Live incident scrape ───────────────────────────────────────
+
+async def run_incident_cycle() -> None:
+    """
+    Scrape OSM Overpass, Waze CCP, and @BlrCityTraffic for live incidents.
+    Deduplicates by 100m spatial proximity, writes to live_incidents table,
+    then refreshes edge_incident costs in the graph cache.
+    """
+    from database import db
+    from graph_cache import graph_cache
+
+    logger.info("[scheduler] Incident scrape cycle starting...")
+    try:
+        import sys
+        from pathlib import Path
+        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        if str(pipeline_dir) not in sys.path:
+            sys.path.insert(0, str(pipeline_dir))
+
+        from incident_scraper import scrape_incidents
+        inserted, expired = await scrape_incidents()
+        logger.info(
+            f"[scheduler] Incident cycle complete — "
+            f"{inserted} new incidents, {expired} expired."
+        )
+        await graph_cache.refresh_incident_costs(db)
+        logger.info("[scheduler] Incident edge costs refreshed.")
+    except Exception as exc:
+        logger.warning(f"[scheduler] Incident cycle failed: {exc}", exc_info=True)
 
 
 # ── Scheduler lifecycle ───────────────────────────────────────────────
@@ -150,7 +254,6 @@ def start_scheduler() -> AsyncIOScheduler:
         next_run_time=_now_plus(minutes=1),
     )
 
-    # Phase 5: LSTM prediction refresh
     scheduler.add_job(
         run_lstm_predict_cycle,
         trigger="interval", minutes=30,
@@ -159,12 +262,29 @@ def start_scheduler() -> AsyncIOScheduler:
         next_run_time=_now_plus(minutes=5),
     )
 
+    # Job 4: CPCB — offset 7 min from WAQI to avoid write collisions
+    scheduler.add_job(
+        run_cpcb_cycle,
+        trigger="interval", minutes=15,
+        id="cpcb_scrape",
+        name="CPCB AQI scrape + grid update",
+        next_run_time=_now_plus(minutes=9),
+    )
+
+    # Job 5: Live incidents — 10 min cadence
+    scheduler.add_job(
+        run_incident_cycle,
+        trigger="interval", minutes=10,
+        id="incident_scrape",
+        name="Live incident scrape (OSM+Waze+Twitter)",
+        next_run_time=_now_plus(minutes=3),
+    )
+
     scheduler.start()
     logger.info(
         "[scheduler] Started. "
-        "AQI: every 15 min. "
-        "Traffic: every 5 min. "
-        "LSTM: every 30 min (first in ~5 min)."
+        "AQI: 15min. Traffic: 5min. LSTM: 30min. "
+        "CPCB: 15min (+7min offset). Incidents: 10min."
     )
     return scheduler
 
