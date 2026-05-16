@@ -116,6 +116,87 @@ class AccidentBlackspot(BaseModel):
     id: int
     lat: float
     lon: float
+
+
+class BoundingBoxRequest(BaseModel):
+    """Bounding box for spatial queries."""
+    min_lat: float = Field(..., ge=-90, le=90)
+    max_lat: float = Field(..., ge=-90, le=90)
+    min_lon: float = Field(..., ge=-180, le=180)
+    max_lon: float = Field(..., ge=-180, le=180)
+
+
+# ─── Response Models ─────────────────────────────────────────────────
+
+class CostBreakdown(BaseModel):
+    """Breakdown of cost components for a route."""
+    total_cost: float
+    travel_time_cost: float
+    aqi_exposure_cost: float
+    accident_risk_cost: float
+    travel_time_minutes: float
+    distance_km: float
+    avg_aqi: float
+    max_aqi: float
+    accident_hotspots_passed: int
+
+
+class SegmentInfo(BaseModel):
+    """Metadata for a single route segment."""
+    edge_id: int
+    road_name: Optional[str] = None
+    length_m: float
+    travel_time_s: float
+    aqi_value: float
+    risk_score: float
+    segment_cost: float
+    geometry: dict  # GeoJSON LineString
+
+
+class RouteResponse(BaseModel):
+    """Response from the routing endpoint."""
+    route_id: str
+    profile: RouteProfile
+    cost_breakdown: CostBreakdown
+    geometry: dict  # GeoJSON LineString (full route)
+    segments: list[SegmentInfo]
+    weights_used: dict  # {"alpha": ..., "beta": ..., "gamma": ...}
+
+
+class CompareRoutesResponse(BaseModel):
+    """Response comparing multiple route profiles."""
+    routes: list[RouteResponse]
+
+
+# ─── Data Models ─────────────────────────────────────────────────────
+
+class AQIReading(BaseModel):
+    """An AQI measurement at a location."""
+    station_id: str
+    station_name: Optional[str] = None
+    lat: float
+    lon: float
+    aqi: float
+    pm25: Optional[float] = None
+    pm10: Optional[float] = None
+    no2: Optional[float] = None
+    timestamp: str
+
+
+class GridCellAQI(BaseModel):
+    """AQI value for a grid cell (used for heatmap)."""
+    cell_id: int
+    center_lat: float
+    center_lon: float
+    aqi: float
+    geometry: dict  # GeoJSON Polygon
+
+
+class AccidentBlackspot(BaseModel):
+    """An accident blackspot location."""
+    id: int
+    lat: float
+    lon: float
     severity: str
     total_accidents: int
     fatal_accidents: int
@@ -127,3 +208,27 @@ class HealthStatus(BaseModel):
     status: str = "ok"
     database: str = "connected"
     version: str = "0.1.0"
+
+
+# ─── Live Incident Models ─────────────────────────────────────────────
+
+class LiveIncident(BaseModel):
+    """A single active live incident from OSM, Waze, or Twitter."""
+    id:            int
+    source:        str                    # osm / waze / twitter
+    incident_type: str                    # accident / closure / waterlogging / construction / hazard
+    lat:           float
+    lon:           float
+    severity:      int                    # 1 = low, 2 = medium, 3 = high
+    description:   Optional[str] = None
+    reported_at:   str
+    expires_at:    str
+
+
+class IncidentLayerResponse(BaseModel):
+    """Response for the /api/incidents/active endpoint."""
+    type:       str = "FeatureCollection"
+    features:   list[dict]               # GeoJSON Feature per incident
+    total:      int
+    as_of:      str                      # ISO timestamp of the query
+    cache_age_seconds: float             # age of edge_incident cache in graph
