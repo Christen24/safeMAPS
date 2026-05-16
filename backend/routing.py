@@ -9,8 +9,14 @@ Phase 1 changes vs original:
   - snap_to_nearest_node() is the only DB call remaining per route request
   - else branch after while loop now correctly signals "no path found"
 
-Cost function (unchanged):
-    C_e = α·T_e + β·(AQI_e / 500) · T_e_min + γ·min(R_e / 10, 1)
+Phase 6: Live incident cost I_e added to cost formula.
+
+Cost function:
+    C_e = α·T_e + β·(AQI_e / 500)·T_min + γ·(min(R_e/10,1) + I_e)·M_t
+
+    I_e = incident cost for edge e (from graph_cache.edge_incident)
+          0 if no active incident within 200m
+          2.0–6.0–10.0 depending on incident severity
 """
 
 import heapq
@@ -82,17 +88,21 @@ def compute_edge_cost(
     beta: float,
     gamma: float,
     time_multiplier: float = 1.0,
+    incident_cost: float = 0.0,
 ) -> float:
     """
-    Composite edge cost: C_e = α·T_e + β·AQI_exposure + γ·R_e
+    Composite edge cost:
+        C_e = α·T_e + β·AQI_exposure + γ·(R_e + I_e)
 
     AQI exposure = (AQI / 500) × travel_time_min
-    Risk         = min(risk_score / 10, 1.0)
+    Risk         = min(risk_score / 10, 1.0)  (normalised)
+    I_e          = live incident cost (0–10.0 based on severity)
     """
     travel_time_min = travel_time_s / 60.0
     aqi_exposure = (aqi_value / 500.0) * travel_time_min
-    risk_norm = min((risk_score * max(time_multiplier, 1.0)) / 10.0, 1.0)
-    cost = alpha * travel_time_min + beta * aqi_exposure + gamma * risk_norm
+    risk_norm    = min((risk_score * max(time_multiplier, 1.0)) / 10.0, 1.0)
+    incident_norm = min(incident_cost / 10.0, 1.0)  # normalise incident to [0,1]
+    cost = alpha * travel_time_min + beta * aqi_exposure + gamma * (risk_norm + incident_norm)
     return max(cost, 0.001)
 
 
@@ -160,9 +170,10 @@ async def find_route(
             travel_time_s = length_m / speed_ms
 
             # All lookups are now O(1) dict reads — no DB calls in the loop
-            aqi_value  = graph_cache.get_aqi(edge_id)
-            risk_score = graph_cache.get_risk(edge_id)
-            road_type = edge_data.get(edge_id, {}).get("road_type")
+            aqi_value     = graph_cache.get_aqi(edge_id)
+            risk_score    = graph_cache.get_risk(edge_id)
+            incident_cost = graph_cache.get_incident(edge_id)
+            road_type     = edge_data.get(edge_id, {}).get("road_type")
             time_multiplier = get_time_multiplier(road_type, hour)
 
             edge_cost = compute_edge_cost(
@@ -173,6 +184,7 @@ async def find_route(
                 beta,
                 gamma,
                 time_multiplier,
+                incident_cost,
             )
             tentative_g = g_score[current] + edge_cost
 
