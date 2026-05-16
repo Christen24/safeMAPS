@@ -1,23 +1,23 @@
 """
-AQI Scraper — Fetches air quality data from WAQI API.
+AQI Scraper — Fetches air quality data from WAQI + CPCB APIs.
 
-Phase 5 additions
-──────────────────
-1. Every scrape cycle now inserts a row into aqi_history with the raw
-   reading plus pre-computed temporal features (hour_of_day, day_of_week,
-   is_weekend). After ~7 days of data collection, lstm_trainer.py can be
-   run to train the forecasting model.
-
-2. interpolate_aqi_to_grid() now uses a single bulk UPDATE FROM (VALUES...)
-   statement instead of a Python loop of N individual UPDATE calls.
-   For ~110k grid cells this reduces DB round-trips from ~110k to 1,
-   dropping the interpolation step from several minutes to ~3 seconds.
+Phase 6 additions (CPCB integration)
+──────────────────────────────────────
+1. Runs CPCB (data.gov.in) and WAQI scrapers concurrently via asyncio.gather.
+   CPCB wins for recency (15-min updates); WAQI fills stations CPCB misses.
+2. merge_cpcb_waqi() deduplicates by spatial proximity (500 m radius).
+3. insert_aqi_history() now writes source, so2, o3, pm25_24h_avg columns
+   added by migration_cpcb.sql.
+4. 24h PM2.5 averages from CPCB give more accurate health exposure scores
+   for LSTM training.
 
 Usage:
     python aqi_scraper.py          # loop every 15 min
     python aqi_scraper.py --once   # single cycle then exit
 
-Requires: WAQI_API_TOKEN in .env
+Requires:
+    WAQI_API_TOKEN  — World Air Quality Index (optional fallback)
+    CPCB_API_KEY    — data.gov.in (preferred; 15-min freshness)
 """
 
 import os
@@ -132,14 +132,11 @@ async def insert_aqi_history(
     lon: float,
     detail: dict,
     recorded_at: datetime,
+    source: str = "waqi",
 ) -> None:
     """
     Insert one row into aqi_history for a single station reading.
-    Called inside scrape_once() for every station with valid AQI data.
-
-    The temporal features are computed here (not in the trainer) so that:
-    - Training can use them directly without a date parse
-    - The schema stays self-contained for SQL-level analysis
+    Includes source field (waqi/cpcb/merged) and extended pollutant columns.
     """
     aqi = detail.get("aqi")
     if aqi is None:
@@ -151,25 +148,33 @@ async def insert_aqi_history(
         INSERT INTO aqi_history (
             station_id, station_name, lat, lon,
             aqi, pm25, pm10, no2,
+            so2, o3, pm25_24h_avg,
             wind_speed, temperature,
             hour_of_day, day_of_week, is_weekend,
+            source,
             recorded_at
         ) VALUES (
             $1,  $2,  $3,  $4,
             $5,  $6,  $7,  $8,
-            $9,  $10,
-            $11, $12, $13,
-            $14
-        );
+            $9,  $10, $11,
+            $12, $13,
+            $14, $15, $16,
+            $17,
+            $18
+        ) ON CONFLICT DO NOTHING;
     """,
         station_uid, station_name, lat, lon,
         float(aqi),
         detail.get("pm25"),
         detail.get("pm10"),
         detail.get("no2"),
+        detail.get("so2"),
+        detail.get("o3"),
+        detail.get("pm25_24h_avg"),
         detail.get("wind"),
         detail.get("temp"),
         hour, dow, is_weekend,
+        source,
         recorded_at,
     )
 
@@ -256,21 +261,48 @@ async def interpolate_aqi_to_grid(conn: asyncpg.Connection) -> None:
     logger.info("Grid AQI bulk update complete.")
 
 
-# ── Main scrape cycle ─────────────────────────────────────────────────
+# ── Main scrape cycle (CPCB + WAQI merged) ───────────────────────────
 
 async def scrape_once() -> None:
     """
     Full AQI scrape cycle:
-      1. Fetch stations + readings from WAQI
-      2. Upsert into aqi_stations + aqi_readings (existing tables)
-      3. Insert into aqi_history (Phase 5 — LSTM training data)
-      4. Bulk-interpolate readings to grid cells
+      1. Fetch WAQI stations (if token set)
+      2. Fetch CPCB stations concurrently (if key set)
+      3. Merge: CPCB preferred for recency; WAQI fills gaps
+      4. Upsert into aqi_stations + aqi_readings
+      5. Insert into aqi_history with source field
+      6. Bulk-interpolate readings to grid cells
     """
-    token = settings.waqi_api_token
-    if not token:
-        logger.warning("WAQI_API_TOKEN not set — using mock data.")
+    token    = settings.waqi_api_token
+    cpcb_key = settings.cpcb_api_key
+
+    if not token and not cpcb_key:
+        logger.warning("No WAQI_API_TOKEN or CPCB_API_KEY set — using mock data.")
         await seed_mock_aqi()
         return
+
+    # ── Parallel fetch from both sources ──────────────────────────────
+    import sys
+    from pathlib import Path
+    pipeline_dir = Path(__file__).resolve().parent
+    if str(pipeline_dir) not in sys.path:
+        sys.path.insert(0, str(pipeline_dir))
+
+    from cpcb_scraper import fetch_cpcb_stations, merge_cpcb_waqi
+
+    waqi_task = (
+        fetch_stations_in_bbox(token)
+        if token else asyncio.coroutine(lambda: [])()
+    )
+    cpcb_task = (
+        fetch_cpcb_stations(cpcb_key)
+        if cpcb_key else asyncio.coroutine(lambda: [])()
+    )
+    waqi_stations, cpcb_stations = await asyncio.gather(
+        fetch_stations_in_bbox(token) if token else _empty(),
+        fetch_cpcb_stations(cpcb_key) if cpcb_key else _empty(),
+    )
+    stations = merge_cpcb_waqi(cpcb_stations, waqi_stations)
 
     conn = await asyncpg.connect(
         host=settings.postgres_host,
@@ -281,38 +313,41 @@ async def scrape_once() -> None:
     )
 
     try:
-        stations   = await fetch_stations_in_bbox(token)
         now_utc    = datetime.now(timezone.utc)
         valid_count = 0
 
         for s in stations:
-            if s["aqi"] is None:
+            if s.get("aqi") is None:
                 continue
 
             # Upsert aqi_stations
-            station_db_id = await conn.fetchval("""
+            await conn.fetchval("""
                 INSERT INTO aqi_stations (station_uid, name, geom)
                 VALUES ($1, $2, ST_SetSRID(ST_MakePoint($3, $4), 4326))
                 ON CONFLICT (station_uid) DO UPDATE SET name = EXCLUDED.name
                 RETURNING id;
             """, s["uid"], s["name"], s["lon"], s["lat"])
 
-            # Fetch detailed pollutant breakdown
-            detail = await fetch_station_detail(token, s["uid"])
-            aqi    = detail.get("aqi") or s["aqi"]
-            detail["aqi"] = aqi
+            # For WAQI-only stations, fetch detailed breakdown
+            detail = dict(s)
+            if s.get("source") == "waqi" and token:
+                fetched = await fetch_station_detail(token, s["uid"])
+                if fetched.get("aqi"):
+                    detail.update(fetched)
 
-            # Insert into aqi_readings (existing schema)
+            aqi = detail.get("aqi")
+
+            # Insert into aqi_readings
             await conn.execute("""
                 INSERT INTO aqi_readings (station_id, aqi, pm25, pm10, no2, co, o3)
-                VALUES ($1, $2, $3, $4, $5, $6, $7);
+                SELECT id, $2, $3, $4, $5, $6, $7 FROM aqi_stations WHERE station_uid = $1;
             """,
-                station_db_id, aqi,
+                s["uid"], aqi,
                 detail.get("pm25"), detail.get("pm10"),
                 detail.get("no2"),  detail.get("co"), detail.get("o3"),
             )
 
-            # Phase 5: insert into aqi_history for LSTM training
+            # Insert into aqi_history with source tracking
             await insert_aqi_history(
                 conn,
                 station_uid=s["uid"],
@@ -321,18 +356,22 @@ async def scrape_once() -> None:
                 lon=s["lon"],
                 detail=detail,
                 recorded_at=now_utc,
+                source=s.get("source", "waqi"),
             )
 
             valid_count += 1
-            await asyncio.sleep(0.1)   # gentle WAQI rate limit
+            await asyncio.sleep(0.05)
 
-        logger.info(f"Stored readings from {valid_count} stations.")
-
-        # Phase 5: bulk grid interpolation
+        logger.info(f"Stored readings from {valid_count} stations (CPCB+WAQI merged).")
         await interpolate_aqi_to_grid(conn)
 
     finally:
         await conn.close()
+
+
+async def _empty() -> list:
+    """Async no-op for when a source is disabled."""
+    return []
 
 
 # ── Mock data (development fallback) ─────────────────────────────────
