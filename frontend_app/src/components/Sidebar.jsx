@@ -106,6 +106,7 @@ export default function Sidebar({
     departureTime, setDepartureTime,
     routes, selectedRoute, setSelectedRoute,
     onCompute, onSwap, loading, error,
+    onShare, shareCopied,
 }) {
     const canCompute = origin.lat && origin.lon && destination.lat && destination.lon && !loading;
     const [segmentsExpanded, setSegmentsExpanded] = useState(false);
@@ -208,6 +209,18 @@ export default function Sidebar({
                 </button>
 
                 {error && <p className="error-text">⚠ {error}</p>}
+
+                {/* Share button — shown once a route is computed */}
+                {routes.length > 0 && onShare && (
+                    <button
+                        type="button"
+                        className={`share-btn ${shareCopied ? 'copied' : ''}`}
+                        onClick={onShare}
+                        title="Copy share link"
+                    >
+                        {shareCopied ? '✓ Link copied!' : '⎘ Share this route'}
+                    </button>
+                )}
             </div>
 
             {/* ── Results ── */}
