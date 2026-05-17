@@ -9,12 +9,41 @@ services:
       POSTGRES_USER: healthroute
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
     ports:
-      - "5433:5432"
+      - "5432:5432"   # expose direct for migrations/admin; pgbouncer handles app traffic
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init-postgis.sh:/docker-entrypoint-initdb.d/10-init-postgis.sh
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U healthroute -d healthroute" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PgBouncer: transaction-mode connection pooler ─────────────────
+  # Prevents connection exhaustion under load (/compare = 8 connections/req)
+  # Backend connects to pgbouncer:5433 instead of postgis:5432
+  pgbouncer:
+    image: bitnami/pgbouncer:1.22.1
+    container_name: safemaps-pgbouncer
+    environment:
+      POSTGRESQL_HOST: postgis
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE: healthroute
+      POSTGRESQL_USERNAME: healthroute
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: 500
+      PGBOUNCER_DEFAULT_POOL_SIZE: 20
+      PGBOUNCER_MIN_POOL_SIZE: 2
+      PGBOUNCER_RESERVE_POOL_SIZE: 5
+      PGBOUNCER_SERVER_IDLE_TIMEOUT: 600
+    expose:
+      - "5432"
+    depends_on:
+      postgis:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -h localhost -p 5432 -U healthroute" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,7 +54,8 @@ services:
       dockerfile: backend/Dockerfile
     container_name: safemaps-backend
     environment:
-      POSTGRES_HOST: postgis
+      # Route backend through PgBouncer instead of direct PostGIS
+      POSTGRES_HOST: pgbouncer
       POSTGRES_PORT: 5432
       POSTGRES_DB: healthroute
       POSTGRES_USER: healthroute
@@ -37,11 +67,10 @@ services:
       WAZE_CCP_URL: ${WAZE_CCP_URL:-}
       X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
       CORS_ORIGINS: "http://localhost:3000,http://frontend"
-    # Internal only — accessed via nginx proxy, not directly from host
     expose:
       - "8000"
     depends_on:
-      postgis:
+      pgbouncer:
         condition: service_healthy
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:8000/health || exit 1" ]
