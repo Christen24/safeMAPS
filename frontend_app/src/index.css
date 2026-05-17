@@ -715,6 +715,42 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   color: var(--text-tertiary);
 }
 
+/* --- Share button ------------------------------------------------- */
+.share-btn {
+  width: 100%;
+  padding: 7px 12px;
+  margin-top: 6px;
+  background: transparent;
+  border: 1px dashed var(--border-dim);
+  border-radius: var(--r-sm);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.60rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: var(--ease-snap);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.share-btn:hover {
+  border-color: var(--acid);
+  color: var(--acid);
+  background: rgba(0, 255, 136, 0.04);
+}
+
+.share-btn.copied {
+  border-color: var(--acid);
+  color: var(--acid);
+  background: rgba(0, 255, 136, 0.06);
+  border-style: solid;
+}
+
+
+
 .cta-btn:not(:disabled) {
   animation: ctaReady 3s ease-in-out infinite;
 }
