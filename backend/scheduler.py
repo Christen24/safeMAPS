@@ -1,24 +1,14 @@
 """
 SafeMAPS — Background Scheduler
 
-Phase 6 additions: Jobs 4 and 5.
-
-Job 4 — CPCB cycle: re-runs only the CPCB scraper (not the full WAQI+merge)
-  every 15 minutes, offset by 7 min from the WAQI cycle so they don't
-  collide on DB writes. After both run, the grid update fires with the
-  freshest combined data.
-
-Job 5 — Incident cycle: scrapes OSM Overpass, Waze CCP, and @BlrCityTraffic
-  every 10 minutes, deduplicates, and refreshes edge_incident costs in the
-  graph cache. Incidents auto-expire after 2 hours if not refreshed.
-
 Job summary
 ────────────
-  aqi_scrape       — every 15 min (first run: 2 min after startup)
-  traffic_scrape   — every 5 min  (first run: 1 min after startup)
-  lstm_predict     — every 30 min (first run: 5 min after startup)
-  cpcb_scrape      — every 15 min (first run: 9 min after startup, offset from WAQI)
-  incident_scrape  — every 10 min (first run: 3 min after startup)
+  Job 1: aqi_scrape      — every 15 min (WAQI+merge+grid, +2min startup)
+  Job 2: traffic_scrape  — every  5 min (+1min startup)
+  Job 3: lstm_predict    — every 30 min (+5min startup)
+  Job 4: cpcb_scrape     — every 15 min (+9min startup, offset from WAQI)
+  Job 5: incident_scrape — every 10 min (+3min startup)
+  Job 6: osm_diff_update — weekly Sunday 02:00 UTC (Phase 11.2)
 """
 
 import asyncio
@@ -219,6 +209,30 @@ async def run_incident_cycle() -> None:
 
 # ── Scheduler lifecycle ───────────────────────────────────────────────
 
+# ── Job 6: OSM weekly diff update ────────────────────────────────────
+
+async def run_osm_diff_cycle() -> None:
+    """
+    Weekly OSM road network diff (Phase 11.2).
+    Downloads latest Karnataka PBF, clips to Bangalore, diffs road_segments,
+    deactivates removed edges, and triggers graph cache reload on changes.
+    Runs Sunday 02:00 UTC — low-traffic window for Bangalore (7:30 IST).
+    """
+    logger.info("[scheduler] OSM weekly diff cycle starting...")
+    try:
+        import sys
+        from pathlib import Path
+        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        if str(pipeline_dir) not in sys.path:
+            sys.path.insert(0, str(pipeline_dir))
+
+        from osm_diff_updater import run_osm_diff_update
+        stats = await run_osm_diff_update()
+        logger.info(f"[scheduler] OSM diff complete: {stats}")
+    except Exception as exc:
+        logger.warning(f"[scheduler] OSM diff cycle failed: {exc}", exc_info=True)
+
+
 def _on_job_event(event) -> None:
     if event.exception:
         logger.error(
@@ -280,11 +294,23 @@ def start_scheduler() -> AsyncIOScheduler:
         next_run_time=_now_plus(minutes=3),
     )
 
+    # Job 6: OSM weekly diff — every Sunday 02:00 UTC (Phase 11.2)
+    scheduler.add_job(
+        run_osm_diff_cycle,
+        trigger="cron",
+        day_of_week="sun",
+        hour=2,
+        minute=0,
+        id="osm_diff_update",
+        name="OSM weekly PBF diff — detect/apply road network changes",
+    )
+
     scheduler.start()
     logger.info(
         "[scheduler] Started. "
         "AQI: 15min. Traffic: 5min. LSTM: 30min. "
-        "CPCB: 15min (+7min offset). Incidents: 10min."
+        "CPCB: 15min (+7min). Incidents: 10min. "
+        "OSM diff: Sunday 02:00 UTC."
     )
     return scheduler
 
