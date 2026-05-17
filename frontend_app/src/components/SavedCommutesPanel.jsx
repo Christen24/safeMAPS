@@ -3,13 +3,7 @@
  *
  * Displays up to 5 saved commutes in the sidebar.
  * One click loads the commute and triggers route computation.
- * "Save current" button appears when a route has been computed
- * and the origin/destination pair is not already saved.
- *
- * Props:
- *   origin, destination, profile  — current route inputs
- *   onLoad(origin, dest, profile) — callback to fill inputs + compute
- *   isActive                      — true when a route is showing
+ * Shows live AQI trend badge vs 7-day average for each commute origin.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -19,6 +13,7 @@ import {
     deleteCommute,
     commuteExists,
 } from '../utils/savedCommutes';
+import { useAQITrend } from '../utils/useAQITrend';
 
 const PROFILE_ICONS = {
     fastest:    '⚡',
@@ -27,13 +22,57 @@ const PROFILE_ICONS = {
     balanced:   '⚖️',
 };
 
-export default function SavedCommutesPanel({ origin, destination, profile, onLoad, isActive }) {
-    const [commutes,   setCommutes]   = useState([]);
-    const [saveName,   setSaveName]   = useState('');
-    const [saving,     setSaving]     = useState(false);
-    const [justSaved,  setJustSaved]  = useState(false);
+// ── Individual commute item with AQI trend badge ──────────────────────
+function CommuteItem({ c, onLoad, onDelete }) {
+    const { trend } = useAQITrend(c.origin?.lat, c.origin?.lon);
 
-    // Reload from localStorage whenever props change or panel opens
+    return (
+        <div
+            className="saved-item"
+            onClick={() => onLoad(c)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => e.key === 'Enter' && onLoad(c)}
+        >
+            <div className="saved-item-main">
+                <span className="saved-item-icon">
+                    {PROFILE_ICONS[c.profile] || '◈'}
+                </span>
+                <div className="saved-item-text">
+                    <span className="saved-item-name">{c.name}</span>
+                    <span className="saved-item-meta">
+                        {c.profile} · {new Date(c.savedAt).toLocaleDateString('en-IN', {
+                            month: 'short', day: 'numeric',
+                        })}
+                    </span>
+                    {trend && (
+                        <span className={`saved-aqi-badge ${trend.direction}`}>
+                            {trend.direction === 'worse' ? '▲' : trend.direction === 'better' ? '▼' : '▬'}
+                            {' '}{trend.label}
+                        </span>
+                    )}
+                </div>
+            </div>
+            <button
+                className="saved-delete-btn"
+                onClick={e => onDelete(c.id, e)}
+                title="Delete commute"
+                aria-label="Delete"
+            >
+                ✕
+            </button>
+        </div>
+    );
+}
+
+
+// ── Panel ─────────────────────────────────────────────────────────────
+export default function SavedCommutesPanel({ origin, destination, profile, onLoad, isActive }) {
+    const [commutes,  setCommutes]  = useState([]);
+    const [saveName,  setSaveName]  = useState('');
+    const [saving,    setSaving]    = useState(false);
+    const [justSaved, setJustSaved] = useState(false);
+
     useEffect(() => {
         setCommutes(getSavedCommutes());
     }, []);
@@ -63,53 +102,26 @@ export default function SavedCommutesPanel({ origin, destination, profile, onLoa
 
     return (
         <div className="saved-panel">
-            {/* Header row */}
             <div className="saved-panel-header">
                 <span className="saved-panel-title">Saved Commutes</span>
                 <span className="saved-panel-count">{commutes.length}/5</span>
             </div>
 
-            {/* Commute list */}
             {commutes.length === 0 ? (
-                <p className="saved-empty">No saved commutes yet. Compute a route and save it.</p>
+                <p className="saved-empty">No saved commutes. Compute a route and save it.</p>
             ) : (
                 <div className="saved-list">
                     {commutes.map(c => (
-                        <div
+                        <CommuteItem
                             key={c.id}
-                            className="saved-item"
-                            onClick={() => handleLoad(c)}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={e => e.key === 'Enter' && handleLoad(c)}
-                        >
-                            <div className="saved-item-main">
-                                <span className="saved-item-icon">
-                                    {PROFILE_ICONS[c.profile] || '◈'}
-                                </span>
-                                <div className="saved-item-text">
-                                    <span className="saved-item-name">{c.name}</span>
-                                    <span className="saved-item-meta">
-                                        {c.profile} · {new Date(c.savedAt).toLocaleDateString('en-IN', {
-                                            month: 'short', day: 'numeric',
-                                        })}
-                                    </span>
-                                </div>
-                            </div>
-                            <button
-                                className="saved-delete-btn"
-                                onClick={e => handleDelete(c.id, e)}
-                                title="Delete commute"
-                                aria-label="Delete"
-                            >
-                                ✕
-                            </button>
-                        </div>
+                            c={c}
+                            onLoad={handleLoad}
+                            onDelete={handleDelete}
+                        />
                     ))}
                 </div>
             )}
 
-            {/* Save current route */}
             {canSave && commutes.length < 5 && (
                 <div className="saved-save-row">
                     {saving ? (

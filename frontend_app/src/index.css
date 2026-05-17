@@ -2195,3 +2195,17 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 
 .pwa-dismiss-btn:hover { opacity: 1; color: #ef4444; }
 
+
+/* --- AQI Trend Badge ------------------------------------------- */
+.saved-aqi-badge {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.52rem;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+  padding: 1px 0;
+}
+
+.saved-aqi-badge.worse  { color: #f97316; }
+.saved-aqi-badge.better { color: var(--acid); }
+.saved-aqi-badge.same   { color: var(--text-tertiary); }
