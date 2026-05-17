@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, memo } from 'react';
 import { aqiColor } from './MapView';
+import SavedCommutesPanel from './SavedCommutesPanel';
 
 const PROFILES = [
     { id: 'fastest',    label: 'Fastest',    sub: 'Min. Time',      icon: '⚡', color: 'var(--ice)'    },
@@ -107,6 +108,7 @@ export default function Sidebar({
     routes, selectedRoute, setSelectedRoute,
     onCompute, onSwap, loading, error,
     onShare, shareCopied,
+    onLoadCommute,
 }) {
     const canCompute = origin.lat && origin.lon && destination.lat && destination.lon && !loading;
     const [segmentsExpanded, setSegmentsExpanded] = useState(false);
@@ -115,6 +117,15 @@ export default function Sidebar({
 
     return (
         <aside className="sidebar">
+
+            {/* ── Saved Commutes ── */}
+            <SavedCommutesPanel
+                origin={origin}
+                destination={destination}
+                profile={profile}
+                onLoad={onLoadCommute}
+                isActive={routes.length > 0}
+            />
 
             {/* ── Route Input ── */}
             <div className="section-header">
