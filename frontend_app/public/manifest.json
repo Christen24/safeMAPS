@@ -1,0 +1,52 @@
+{
+  "name": "SafeMAPS — Bangalore Health Routing",
+  "short_name": "SafeMAPS",
+  "description": "Real-time AQI-aware, safety-first route planning for Bangalore commuters.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090c14",
+  "theme_color": "#00ff88",
+  "orientation": "portrait-primary",
+  "lang": "en-IN",
+  "icons": [
+    {
+      "src": "/icons/icon-72.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-128.png",
+      "sizes": "128x128",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Quick Route",
+      "url": "/?quick=1",
+      "description": "Open SafeMAPS and compute a route"
+    }
+  ],
+  "categories": ["navigation", "travel", "health"],
+  "prefer_related_applications": false
+}

@@ -1,26 +1,76 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-    plugins: [react()],
+    plugins: [
+        react(),
+        VitePWA({
+            registerType: 'autoUpdate',
+            includeAssets: ['icons/*.png', 'manifest.json'],
+            manifest: false,             // use public/manifest.json
+            workbox: {
+                // Cache the shell (HTML, JS, CSS) and leaflet tiles
+                globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
+                runtimeCaching: [
+                    {
+                        // Cache Leaflet tile requests for offline map viewing
+                        urlPattern: /^https:\/\/\{s\}\.tile\.openstreetmap\.org\/.*/i,
+                        handler: 'CacheFirst',
+                        options: {
+                            cacheName: 'osm-tiles',
+                            expiration: {
+                                maxEntries: 500,
+                                maxAgeSeconds: 7 * 24 * 60 * 60, // 1 week
+                            },
+                            cacheableResponse: { statuses: [0, 200] },
+                        },
+                    },
+                    {
+                        // Cache API health endpoint for quick offline detection
+                        urlPattern: /\/health$/,
+                        handler: 'NetworkFirst',
+                        options: {
+                            cacheName: 'api-health',
+                            networkTimeoutSeconds: 3,
+                        },
+                    },
+                    {
+                        // Cache last computed route response for offline fallback
+                        urlPattern: /\/api\/route\/.*/,
+                        handler: 'NetworkFirst',
+                        options: {
+                            cacheName: 'api-routes',
+                            expiration: { maxEntries: 5, maxAgeSeconds: 3600 },
+                        },
+                    },
+                ],
+            },
+            devOptions: {
+                enabled: true,           // Show PWA in dev mode for testing
+            },
+        }),
+    ],
     server: {
         port: 5173,
-        // Proxy all /api calls to the FastAPI backend during development.
-        // This eliminates the hardcoded localhost:8000 URL in App.jsx and
-        // avoids CORS issues — the browser talks to Vite, Vite forwards to FastAPI.
         proxy: {
             '/api': {
                 target: 'http://localhost:8000',
                 changeOrigin: true,
-                // Remove /api prefix before forwarding:
-                // /api/route → http://localhost:8000/api/route
-                // (backend already includes /api in its router prefix, so no rewrite needed)
             },
         },
     },
     build: {
         outDir: 'dist',
-        // Sourcemaps help debugging the production build
         sourcemap: false,
+        rollupOptions: {
+            output: {
+                // Split large chunks for better caching
+                manualChunks: {
+                    leaflet: ['leaflet', 'react-leaflet'],
+                    react:   ['react', 'react-dom'],
+                },
+            },
+        },
     },
 })
