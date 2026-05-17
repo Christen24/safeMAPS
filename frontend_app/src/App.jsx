@@ -3,7 +3,8 @@ import Sidebar from './components/Sidebar';
 import MapView from './components/MapView';
 import LandingPage from './components/LandingPage';
 import GreenScore, { SESSION_ID } from './components/GreenScore';
-import { decodeURLToRoute, encodeRouteToURL, buildShareURL, clearURLParams } from './utils/shareURL';
+import PWAInstallPrompt from './components/PWAInstallPrompt';
+import { decodeURLToRoute, encodeRouteToURL, buildShareURL } from './utils/shareURL';
 import './index.css';
 import 'leaflet/dist/leaflet.css';
 
@@ -330,6 +331,7 @@ export default function App() {
 
     return (
         <div className="app" style={{ flexDirection: 'column' }}>
+            <PWAInstallPrompt />
             {showBanner && (
                 <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
             )}
