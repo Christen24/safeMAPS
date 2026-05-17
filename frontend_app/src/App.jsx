@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import MapView from './components/MapView';
 import LandingPage from './components/LandingPage';
 import GreenScore, { SESSION_ID } from './components/GreenScore';
+import { decodeURLToRoute, encodeRouteToURL, buildShareURL, clearURLParams } from './utils/shareURL';
 import './index.css';
 import 'leaflet/dist/leaflet.css';
 
@@ -85,8 +86,49 @@ export default function App() {
     const [mapBounds, setMapBounds]           = useState(null);
     const [isOffline, setIsOffline]           = useState(false);
     const [bannerDismissed, setBannerDismissed] = useState(false);
+    const [shareCopied, setShareCopied]       = useState(false);
+    const pendingAutoCompute                  = useRef(false);
 
-    // ── Backend health check on mount ─────────────────────────────────
+    // ── Decode URL params on mount → auto-fill + auto-compute ─────────
+    useEffect(() => {
+        const decoded = decodeURLToRoute();
+        if (decoded) {
+            setOrigin(decoded.origin);
+            setDestination(decoded.destination);
+            handleProfileChange(decoded.profile);
+            if (decoded.departureTime) setDepartureTime(decoded.departureTime);
+            setView('dashboard');
+            pendingAutoCompute.current = true;
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // ── Auto-compute once view is 'dashboard' and coords are loaded ────
+    const autoComputeRan = useRef(false);
+    useEffect(() => {
+        if (pendingAutoCompute.current && view === 'dashboard' &&
+            origin.lat && destination.lat && !autoComputeRan.current) {
+            autoComputeRan.current = true;
+            pendingAutoCompute.current = false;
+            // small delay so map renders first
+            setTimeout(() => computeRoute(), 200);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view, origin.lat, destination.lat]);
+
+    // ── Copy share link to clipboard ──────────────────────────────────
+    const handleShare = useCallback(() => {
+        if (!origin.lat || !destination.lat) return;
+        const url = buildShareURL(origin, destination, profile, departureTime);
+        navigator.clipboard.writeText(url).then(() => {
+            setShareCopied(true);
+            setTimeout(() => setShareCopied(false), 2000);
+        }).catch(() => {
+            // fallback: select text
+            prompt('Copy this link:', url);
+        });
+    }, [origin, destination, profile, departureTime]);
+
     useEffect(() => {
         let cancelled = false;
         const checkHealth = async () => {
@@ -227,7 +269,11 @@ export default function App() {
                 const sel = data.routes.find(r => r.profile === profile) || data.routes[0];
                 setSelectedRoute(sel); chosen = sel;
             }
-            if (chosen) recordTrip(chosen);
+            if (chosen) {
+                recordTrip(chosen);
+                // Encode route to URL for sharing/bookmarking
+                encodeRouteToURL(origin, destination, profile, departureTime);
+            }
         } catch (err) {
             setError(err.message || 'Route computation failed');
             const mocks = getMockRoutes();
@@ -289,6 +335,7 @@ export default function App() {
                     setSelectedRoute={setSelectedRoute}
                     onCompute={computeRoute} onSwap={swapPoints}
                     loading={loading} error={error}
+                    onShare={handleShare} shareCopied={shareCopied}
                 />
                 <MapView
                     origin={origin} destination={destination}
