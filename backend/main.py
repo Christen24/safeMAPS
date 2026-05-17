@@ -1,17 +1,20 @@
 """
-SafeMAPS — FastAPI Application Entry Point  (v0.4.0 — Phase 6: Green Score)
+SafeMAPS — FastAPI Application Entry Point  (v0.5.0 — Phase 11: BiDir A* + PWA + PgBouncer)
 """
 
+import time
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from config import settings
 from database import db
 from graph_cache import graph_cache
+from metrics import metrics
 from scheduler import start_scheduler, stop_scheduler
 from routes.route import router as route_router
 from routes.aqi import router as aqi_router
@@ -132,8 +135,15 @@ async def health_check():
             "traffic_interval_minutes":   5,
             "lstm_interval_minutes":     30,
             "incident_interval_minutes": 10,
+            "osm_diff_cron":             "Sunday 02:00 UTC",
         },
     }
+
+
+@app.get("/metrics", tags=["System"], response_class=PlainTextResponse)
+async def prometheus_metrics():
+    """Prometheus-compatible metrics endpoint. Scrape at /metrics."""
+    return metrics.to_prometheus()
 
 
 @app.post("/api/admin/refresh-graph", tags=["Admin"], dependencies=[Depends(require_admin_key)])
