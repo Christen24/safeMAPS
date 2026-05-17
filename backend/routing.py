@@ -1,22 +1,12 @@
 """
 SafeMAPS — Weighted A* Routing Engine
 
-Phase 1 changes vs original:
-  - Reads nodes, adjacency, edge_data from graph_cache (in-memory)
-    instead of calling get_road_graph() which loaded ~500k rows per request
-  - AQI and risk lookups hit graph_cache.get_aqi() / get_risk()
-    instead of individual DB queries per visited edge
-  - snap_to_nearest_node() is the only DB call remaining per route request
-  - else branch after while loop now correctly signals "no path found"
-
+Phase 1: in-memory graph cache eliminates per-request DB queries.
 Phase 6: Live incident cost I_e added to cost formula.
+Phase 11: Bidirectional A* dispatched for routes >5km (halves search space).
 
 Cost function:
-    C_e = α·T_e + β·(AQI_e / 500)·T_min + γ·(min(R_e/10,1) + I_e)·M_t
-
-    I_e = incident cost for edge e (from graph_cache.edge_incident)
-          0 if no active incident within 200m
-          2.0–6.0–10.0 depending on incident severity
+    C_e = α·T_e + β·(AQI_e/500)·T_min + γ·(min(R_e/10,1) + I_e)
 """
 
 import heapq
@@ -32,6 +22,10 @@ from models import (
     SegmentInfo,
     RouteProfile,
 )
+
+# Routes longer than this straight-line distance use bidirectional A*
+# Shorter routes use standard A* (lower overhead for short searches)
+BIDIRECTIONAL_THRESHOLD_M = 5_000   # 5 km
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -106,6 +100,58 @@ def compute_edge_cost(
     return max(cost, 0.001)
 
 
+
+
+def _astar_search(
+    start_id, goal_id, nodes, adjacency, edge_data, alpha, beta, gamma, hour
+):
+    """Standard unidirectional A*. Returns list of edge_ids or None."""
+    if start_id not in nodes or goal_id not in nodes:
+        return None
+    goal_lat, goal_lon = nodes[goal_id]
+    open_set = [(0.0, start_id)]
+    came_from = {}
+    g_score   = {start_id: 0.0}
+    path_found = False
+
+    while open_set:
+        _f, current = __import__("heapq").heappop(open_set)
+        if current == goal_id:
+            path_found = True
+            break
+        for neighbour, edge_id, length_m, speed_kmh in adjacency.get(current, []):
+            speed_ms      = max(speed_kmh / 3.6, 0.5)
+            travel_time_s = length_m / speed_ms
+            edge_cost = compute_edge_cost(
+                travel_time_s,
+                graph_cache.get_aqi(edge_id),
+                graph_cache.get_risk(edge_id),
+                alpha, beta, gamma,
+                get_time_multiplier(edge_data.get(edge_id, {}).get("road_type"), hour),
+                graph_cache.get_incident(edge_id),
+            )
+            tentative_g = g_score[current] + edge_cost
+            if tentative_g < g_score.get(neighbour, float("inf")):
+                came_from[neighbour] = (current, edge_id)
+                g_score[neighbour]   = tentative_g
+                if neighbour in nodes:
+                    nlat, nlon = nodes[neighbour]
+                    h_cost = alpha * (haversine(nlat, nlon, goal_lat, goal_lon) / 3.6 / 120.0 / 60.0)
+                else:
+                    h_cost = 0.0
+                __import__("heapq").heappush(open_set, (tentative_g + h_cost, neighbour))
+
+    if not path_found:
+        return None
+    path_edges = []
+    cur = goal_id
+    while cur in came_from:
+        prev, eid = came_from[cur]
+        path_edges.append(eid)
+        cur = prev
+    path_edges.reverse()
+    return path_edges or None
+
 async def find_route(
     origin_lat: float,
     origin_lon: float,
@@ -143,79 +189,31 @@ async def find_route(
     adjacency = graph_cache.adjacency
     edge_data = graph_cache.edge_data
 
+    # ── Dispatch: bidirectional A* for long routes ─────────────────────
     if start_id not in nodes or goal_id not in nodes:
         return None
 
-    goal_lat, goal_lon = nodes[goal_id]
+    s_lat, s_lon = nodes[start_id]
+    g_lat, g_lon = nodes[goal_id]
+    straight_m = haversine(s_lat, s_lon, g_lat, g_lon)
 
-    # ── A* Search ─────────────────────────────────────────────────────
-    open_set = [(0.0, start_id)]
-    came_from: dict[int, tuple[int, int]] = {}   # node → (prev_node, edge_id)
-    g_score: dict[int, float] = {start_id: 0.0}
-    path_found = False
-
-    while open_set:
-        _f, current = heapq.heappop(open_set)
-
-        if current == goal_id:
-            path_found = True
-            break
-
-        neighbours = adjacency.get(current)
-        if not neighbours:
-            continue
-
-        for neighbour, edge_id, length_m, speed_kmh in neighbours:
-            speed_ms = max(speed_kmh / 3.6, 0.5)
-            travel_time_s = length_m / speed_ms
-
-            # All lookups are now O(1) dict reads — no DB calls in the loop
-            aqi_value     = graph_cache.get_aqi(edge_id)
-            risk_score    = graph_cache.get_risk(edge_id)
-            incident_cost = graph_cache.get_incident(edge_id)
-            road_type     = edge_data.get(edge_id, {}).get("road_type")
-            time_multiplier = get_time_multiplier(road_type, hour)
-
-            edge_cost = compute_edge_cost(
-                travel_time_s,
-                aqi_value,
-                risk_score,
-                alpha,
-                beta,
-                gamma,
-                time_multiplier,
-                incident_cost,
+    if straight_m >= BIDIRECTIONAL_THRESHOLD_M:
+        from bidirectional_astar import bidirectional_astar
+        path_edges = bidirectional_astar(start_id, goal_id, alpha, beta, gamma, hour)
+        if not path_edges:
+            # Fallback to standard A* if bidirectional fails
+            path_edges = _astar_search(
+                start_id, goal_id, nodes, adjacency, edge_data, alpha, beta, gamma, hour
             )
-            tentative_g = g_score[current] + edge_cost
-
-            if tentative_g < g_score.get(neighbour, float("inf")):
-                came_from[neighbour] = (current, edge_id)
-                g_score[neighbour] = tentative_g
-
-                # Heuristic: optimistic travel time using straight-line distance
-                if neighbour in nodes:
-                    n_lat, n_lon = nodes[neighbour]
-                    h_dist = haversine(n_lat, n_lon, goal_lat, goal_lon)
-                    h_cost = alpha * (h_dist / 3.6 / 33.3 / 60.0)  # ~120 km/h max
-                else:
-                    h_cost = 0.0
-
-                heapq.heappush(open_set, (tentative_g + h_cost, neighbour))
-
-    if not path_found:
-        return None
-
-    # ── Reconstruct path ──────────────────────────────────────────────
-    path_edges: list[int] = []
-    current = goal_id
-    while current in came_from:
-        prev, edge_id = came_from[current]
-        path_edges.append(edge_id)
-        current = prev
-    path_edges.reverse()
+    else:
+        path_edges = _astar_search(
+            start_id, goal_id, nodes, adjacency, edge_data, alpha, beta, gamma, hour
+        )
 
     if not path_edges:
         return None
+
+    goal_lat, goal_lon = nodes[goal_id]
 
     # ── Build response ────────────────────────────────────────────────
     segments: list[SegmentInfo] = []
