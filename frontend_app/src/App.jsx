@@ -318,6 +318,16 @@ export default function App() {
         );
     }
 
+    // ── Load a saved commute (one-tap re-route) ────────────────────
+    const handleLoadCommute = useCallback((comOrigin, comDest, comProfile) => {
+        setOrigin(comOrigin);
+        setDestination(comDest);
+        handleProfileChange(comProfile);
+        setRoutes([]); setSelectedRoute(null); setError(null);
+        setTimeout(() => computeRoute(), 200);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [handleProfileChange]);
+
     return (
         <div className="app" style={{ flexDirection: 'column' }}>
             {showBanner && (
@@ -336,6 +346,7 @@ export default function App() {
                     onCompute={computeRoute} onSwap={swapPoints}
                     loading={loading} error={error}
                     onShare={handleShare} shareCopied={shareCopied}
+                    onLoadCommute={handleLoadCommute}
                 />
                 <MapView
                     origin={origin} destination={destination}
