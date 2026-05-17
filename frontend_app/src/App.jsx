@@ -18,7 +18,7 @@ const PRESET_WEIGHTS = {
 };
 
 // ── Nav bar (extracted for reuse across views) ─────────────────
-const NavBar = memo(function NavBar({ view, setView, handleShowAQI }) {
+const NavBar = memo(function NavBar({ view, setView, handleShowAQI, isOffline }) {
     return (
         <div className="nav-bar">
             {/* Brand */}
@@ -27,7 +27,7 @@ const NavBar = memo(function NavBar({ view, setView, handleShowAQI }) {
                     <div className="nav-hex" />
                     <span className="nav-wordmark">SafeMAPS</span>
                 </div>
-                <span className="nav-system-label">BLR HEALTH ROUTING · v0.4</span>
+                <span className="nav-system-label">BLR HEALTH ROUTING · v0.5</span>
             </div>
 
             {/* Tabs */}
@@ -53,14 +53,14 @@ const NavBar = memo(function NavBar({ view, setView, handleShowAQI }) {
 
             {/* Live readout */}
             <div className="nav-readout">
-                <div className="readout-dot" />
+                <div className={`readout-dot ${isOffline ? 'offline' : ''}`} />
                 <div className="readout-item">
-                    <span className="readout-value">LIVE</span>
-                    <span className="readout-label">Data feed</span>
+                    <span className="readout-value">{isOffline ? 'DEMO' : 'LIVE'}</span>
+                    <span className="readout-label">{isOffline ? 'No backend' : 'Data feed'}</span>
                 </div>
                 <div className="readout-item">
-                    <span className="readout-value">98.2</span>
-                    <span className="readout-label">Safety idx</span>
+                    <span className="readout-value">BiDir</span>
+                    <span className="readout-label">A* engine</span>
                 </div>
             </div>
         </div>
@@ -311,7 +311,7 @@ export default function App() {
                 {showBanner && (
                     <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
                 )}
-                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} />
+                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} />
                 <div className="main-content gs-page" style={{ marginTop: 0 }}>
                     <GreenScore />
                 </div>
@@ -335,7 +335,7 @@ export default function App() {
             {showBanner && (
                 <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
             )}
-            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} />
+            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} />
             <div className="main-content">
                 <Sidebar
                     origin={origin} destination={destination}
