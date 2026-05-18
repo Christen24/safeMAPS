@@ -2419,3 +2419,104 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   letter-spacing: 0.06em;
   opacity: 0.85;
 }
+
+/* ================================================================
+   SafeMAPS v0.5 — CSS Polish Pass
+   Smoother hover lifts, gradient section dividers, feature card
+   accent glow, and improved result-card selection ring.
+   ================================================================ */
+
+/* -- Feature card: subtle green glow on hover ------------------- */
+.feature-card:hover {
+  box-shadow:
+    0 8px 32px rgba(0,0,0,0.35),
+    0 0 0 1px rgba(0,255,136,0.18),
+    inset 0 1px 0 rgba(255,255,255,0.05);
+  transform: translateY(-3px);
+}
+
+.feature-card {
+  transition: transform 0.22s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.22s ease;
+}
+
+/* Feature icon subtle scale on hover */
+.feature-card:hover .feature-icon {
+  transform: scale(1.18);
+  transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1);
+}
+
+.feature-icon {
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+/* -- Result card: cleaner selected ring + lift ------------------ */
+.result-card {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.result-card:hover {
+  transform: translateX(3px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+}
+
+.result-card.selected {
+  box-shadow:
+    0 0 0 1.5px var(--acid),
+    0 6px 24px rgba(0,255,136,0.12);
+  border-color: rgba(0,255,136,0.35);
+}
+
+/* -- Profile card: spring lift ----------------------------------  */
+.profile-card {
+  transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.profile-card:hover {
+  transform: translateY(-2px) scale(1.03);
+}
+
+/* -- Gradient section divider between sidebar sections ---------- */
+.section-header {
+  position: relative;
+}
+
+.section-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--acid) 40%, transparent);
+  opacity: 0.2;
+}
+
+/* -- Landing CTA button: spring scale --------------------------- */
+.landing-cta-primary {
+  transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease;
+}
+
+.landing-cta-primary:hover {
+  transform: scale(1.04) translateY(-2px);
+}
+
+/* -- Saved item: horizontal slide on hover ---------------------- */
+.saved-item {
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.saved-item:hover {
+  transform: translateX(3px);
+}
+
+/* -- Segment row: faster transition ----------------------------- */
+.segment-row {
+  transition: background 0.12s ease;
+}
+
+/* -- Scrollbar slim styling ------------------------------------- */
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border-dim); border-radius: 2px; }
+.sidebar::-webkit-scrollbar-thumb:hover { background: var(--acid); opacity: 0.5; }
