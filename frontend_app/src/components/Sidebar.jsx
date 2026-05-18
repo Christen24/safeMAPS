@@ -113,6 +113,17 @@ export default function Sidebar({
     const canCompute = origin.lat && origin.lon && destination.lat && destination.lon && !loading;
     const [segmentsExpanded, setSegmentsExpanded] = useState(false);
 
+    // ── Enter key = compute ───────────────────────────────────────────
+    useEffect(() => {
+        const handler = (e) => {
+            if (e.key === 'Enter' && canCompute && document.activeElement?.tagName !== 'INPUT') {
+                onCompute();
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [canCompute, onCompute]);
+
     useEffect(() => { setSegmentsExpanded(false); }, [selectedRoute?.route_id]);
 
     return (
@@ -218,6 +229,7 @@ export default function Sidebar({
                 <button className="cta-btn" onClick={onCompute} disabled={!canCompute}>
                     <span>{loading ? '· COMPUTING ·' : '▶ COMPUTE SAFE ROUTE'}</span>
                 </button>
+                <p className="shortcut-hint">{canCompute ? 'Press ⏎ Enter to compute' : 'Pin origin & destination on map'}</p>
 
                 {error && <p className="error-text">⚠ {error}</p>}
 
@@ -241,6 +253,26 @@ export default function Sidebar({
                         <span className="section-label">Route Analysis</span>
                         <span className="section-badge">{routes.length} paths</span>
                     </div>
+
+                    {/* Selected route summary strip */}
+                    {selectedRoute && (
+                        <div className="route-summary-strip">
+                            <span className="summary-item">
+                                <span className="summary-icon">⏱</span>
+                                {selectedRoute.cost_breakdown.travel_time_minutes.toFixed(0)} min
+                            </span>
+                            <span className="summary-sep" />
+                            <span className="summary-item">
+                                <span className="summary-icon">⇔</span>
+                                {selectedRoute.cost_breakdown.distance_km.toFixed(1)} km
+                            </span>
+                            <span className="summary-sep" />
+                            <span className="summary-item" style={{ color: selectedRoute.cost_breakdown.avg_aqi < 100 ? 'var(--acid)' : 'var(--amber)' }}>
+                                <span className="summary-icon">🌫</span>
+                                AQI {selectedRoute.cost_breakdown.avg_aqi.toFixed(0)}
+                            </span>
+                        </div>
+                    )}
 
                     <div className="results-section">
                         {routes.map(route => {
