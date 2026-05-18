@@ -2406,3 +2406,16 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* --- NavBar incident badge + clock -------------------------------- */
+.nav-incident-badge {
+  color: var(--infra) !important;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-clock {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+}

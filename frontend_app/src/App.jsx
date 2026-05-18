@@ -18,7 +18,22 @@ const PRESET_WEIGHTS = {
 };
 
 // ── Nav bar (extracted for reuse across views) ─────────────────
-const NavBar = memo(function NavBar({ view, setView, handleShowAQI, isOffline }) {
+function useIST() {
+    const [time, setTime] = useState(() =>
+        new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata', hour12: false })
+    );
+    useEffect(() => {
+        const tick = setInterval(() =>
+            setTime(new Date().toLocaleTimeString('en-IN', {
+                hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata', hour12: false
+            })), 30_000);
+        return () => clearInterval(tick);
+    }, []);
+    return time;
+}
+
+const NavBar = memo(function NavBar({ view, setView, handleShowAQI, isOffline, incidentCount }) {
+    const istTime = useIST();
     return (
         <div className="nav-bar">
             {/* Brand */}
@@ -58,9 +73,15 @@ const NavBar = memo(function NavBar({ view, setView, handleShowAQI, isOffline })
                     <span className="readout-value">{isOffline ? 'DEMO' : 'LIVE'}</span>
                     <span className="readout-label">{isOffline ? 'No backend' : 'Data feed'}</span>
                 </div>
+                {incidentCount > 0 && (
+                    <div className="readout-item">
+                        <span className="readout-value nav-incident-badge">{incidentCount}</span>
+                        <span className="readout-label">incidents</span>
+                    </div>
+                )}
                 <div className="readout-item">
-                    <span className="readout-value">BiDir</span>
-                    <span className="readout-label">A* engine</span>
+                    <span className="readout-value nav-clock">{istTime}</span>
+                    <span className="readout-label">IST</span>
                 </div>
             </div>
         </div>
@@ -311,7 +332,7 @@ export default function App() {
                 {showBanner && (
                     <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
                 )}
-                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} />
+                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.length ?? 0} />
                 <div className="main-content gs-page" style={{ marginTop: 0 }}>
                     <GreenScore />
                 </div>
@@ -335,7 +356,7 @@ export default function App() {
             {showBanner && (
                 <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
             )}
-            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} />
+            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.length ?? 0} />
             <div className="main-content">
                 <Sidebar
                     origin={origin} destination={destination}
