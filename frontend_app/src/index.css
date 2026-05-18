@@ -2272,3 +2272,85 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
     grid-template-columns: repeat(4, 1fr);
   }
 }
+
+/* --- RouteCard redesign additions --------------------------------- */
+.result-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hotspot-chip {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #ef4444;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.result-stat-unit {
+  font-size: 0.58em;
+  opacity: 0.65;
+  margin-left: 1px;
+}
+
+/* AQI pill in route card */
+.result-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.aqi-category-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.05em;
+}
+
+.aqi-dot-sm {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.time-delta-badge {
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.time-delta-badge.fastest {
+  color: var(--acid);
+  opacity: 1;
+}
+
+/* AQI exposure bar */
+.aqi-bar-track {
+  margin-top: 8px;
+  height: 2px;
+  background: var(--border-dim);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.aqi-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.6s ease;
+  opacity: 0.75;
+}

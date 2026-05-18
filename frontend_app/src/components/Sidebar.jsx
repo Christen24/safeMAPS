@@ -243,14 +243,20 @@ export default function Sidebar({
                     </div>
 
                     <div className="results-section">
-                        {routes.map(route => (
-                            <RouteCard
-                                key={route.route_id}
-                                route={route}
-                                isSelected={selectedRoute?.route_id === route.route_id}
-                                onClick={() => setSelectedRoute(route)}
-                            />
-                        ))}
+                        {routes.map(route => {
+                            const fastestTime = Math.min(
+                                ...routes.map(r => r.cost_breakdown.travel_time_minutes)
+                            );
+                            return (
+                                <RouteCard
+                                    key={route.route_id}
+                                    route={route}
+                                    isSelected={selectedRoute?.route_id === route.route_id}
+                                    onClick={() => setSelectedRoute(route)}
+                                    fastestTime={fastestTime}
+                                />
+                            );
+                        })}
 
                         {selectedRoute && (
                             <div className="route-detail-panel">
@@ -285,53 +291,102 @@ export default function Sidebar({
     );
 }
 
-const RouteCard = memo(function RouteCard({ route, isSelected, onClick }) {
+const AQI_LABEL = (v) =>
+    v < 50 ? 'Good' : v < 100 ? 'Moderate' : v < 150 ? 'Unhealthy·SG' : 'Unhealthy';
+
+const RouteCard = memo(function RouteCard({ route, isSelected, onClick, fastestTime }) {
     const cb = route.cost_breakdown;
-    const aqiCol = cb.avg_aqi < 50 ? 'var(--acid)' : cb.avg_aqi < 100 ? 'var(--amber)' : 'var(--infra)';
+
+    const aqiCol =
+        cb.avg_aqi < 50  ? 'var(--acid)'  :
+        cb.avg_aqi < 100 ? 'var(--amber)' : 'var(--infra)';
+
     const profileColor = {
         fastest: 'var(--ice)', safest: 'var(--acid)',
         healthiest: 'var(--amber)', balanced: 'var(--violet)',
     }[route.profile] || 'var(--text-primary)';
-    const profileIcon = { fastest: '⚡', safest: '🛡️', healthiest: '🫁', balanced: '⚖️' }[route.profile] || '';
+
+    const profileIcon = {
+        fastest: '⚡', safest: '🛡️', healthiest: '🫁', balanced: '⚖️',
+    }[route.profile] || '';
+
+    // How many minutes longer than fastest?
+    const timeDelta = fastestTime
+        ? cb.travel_time_minutes - fastestTime
+        : null;
 
     return (
         <div
             className={`result-card ${route.profile} ${isSelected ? 'selected' : ''}`}
             onClick={onClick}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => e.key === 'Enter' && onClick()}
         >
+            {/* Header row */}
             <div className="result-header">
                 <span className="result-profile-name" style={{ color: profileColor }}>
                     {profileIcon} {route.profile.toUpperCase()}
                 </span>
-                <span className="result-score">{cb.total_cost.toFixed(2)}</span>
+                <div className="result-header-right">
+                    {cb.accident_hotspots_passed > 0 && (
+                        <span className="hotspot-chip" title={`${cb.accident_hotspots_passed} blackspot(s) on route`}>
+                            ⚠ {cb.accident_hotspots_passed}
+                        </span>
+                    )}
+                    <span className="result-score">{cb.total_cost.toFixed(2)}</span>
+                </div>
             </div>
 
+            {/* Stats row */}
             <div className="result-stats">
                 <div className="result-stat">
                     <span className="result-stat-value" style={{ color: 'var(--ice)' }}>
-                        {cb.travel_time_minutes.toFixed(0)}m
+                        {cb.travel_time_minutes.toFixed(0)}
+                        <span className="result-stat-unit">min</span>
                     </span>
-                    <span className="result-stat-label">time</span>
+                    <span className="result-stat-label">travel</span>
                 </div>
                 <div className="result-stat">
-                    <span className="result-stat-value">{cb.distance_km.toFixed(1)}</span>
-                    <span className="result-stat-label">km</span>
+                    <span className="result-stat-value">
+                        {cb.distance_km.toFixed(1)}
+                        <span className="result-stat-unit">km</span>
+                    </span>
+                    <span className="result-stat-label">distance</span>
                 </div>
                 <div className="result-stat">
                     <span className="result-stat-value" style={{ color: aqiCol }}>
                         {cb.avg_aqi.toFixed(0)}
                     </span>
-                    <span className="result-stat-label">AQI</span>
+                    <span className="result-stat-label">avg AQI</span>
                 </div>
-                <div className="result-stat">
-                    <span
-                        className="result-stat-value"
-                        style={{ color: cb.accident_hotspots_passed > 0 ? 'var(--infra)' : 'var(--acid)' }}
-                    >
-                        {cb.accident_hotspots_passed}
+            </div>
+
+            {/* AQI category + time delta row */}
+            <div className="result-meta-row">
+                <span className="aqi-category-pill" style={{ borderColor: aqiCol, color: aqiCol }}>
+                    <span className="aqi-dot-sm" style={{ background: aqiCol }} />
+                    {AQI_LABEL(cb.avg_aqi)}
+                </span>
+                {timeDelta !== null && timeDelta > 0.5 && (
+                    <span className="time-delta-badge">
+                        +{timeDelta.toFixed(0)} min vs fastest
                     </span>
-                    <span className="result-stat-label">spots</span>
-                </div>
+                )}
+                {timeDelta !== null && timeDelta <= 0.5 && (
+                    <span className="time-delta-badge fastest">Fastest option</span>
+                )}
+            </div>
+
+            {/* AQI exposure bar */}
+            <div className="aqi-bar-track">
+                <div
+                    className="aqi-bar-fill"
+                    style={{
+                        width: `${Math.min((cb.avg_aqi / 200) * 100, 100)}%`,
+                        background: aqiCol,
+                    }}
+                />
             </div>
         </div>
     );
