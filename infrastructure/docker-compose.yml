@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: healthroute
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
     ports:
-      - "5432:5432"   # expose direct for migrations/admin; pgbouncer handles app traffic
+      - "5433:5432"   # expose direct for migrations/admin; pgbouncer handles app traffic
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init-postgis.sh:/docker-entrypoint-initdb.d/10-init-postgis.sh
