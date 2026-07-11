@@ -90,19 +90,19 @@ class GraphCache:
     @property
     def age_seconds(self) -> float:
         if self._loaded_at is None:
-            return float("inf")
+            return -1.0
         return time.monotonic() - self._loaded_at
 
     @property
     def aqi_age_seconds(self) -> float:
         if self._aqi_refreshed_at is None:
-            return float("inf")
+            return -1.0
         return time.monotonic() - self._aqi_refreshed_at
 
     @property
     def incident_age_seconds(self) -> float:
         if self._incident_refreshed_at is None:
-            return float("inf")
+            return -1.0
         return time.monotonic() - self._incident_refreshed_at
 
     @property
