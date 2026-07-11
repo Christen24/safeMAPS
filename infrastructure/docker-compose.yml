@@ -38,6 +38,7 @@ services:
       PGBOUNCER_RESERVE_POOL_SIZE: 5
       PGBOUNCER_SERVER_IDLE_TIMEOUT: 600
       PGBOUNCER_PORT: 5432
+      PGBOUNCER_DATABASE: healthroute
     expose:
       - "5432"
     depends_on:
