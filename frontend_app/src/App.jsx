@@ -109,6 +109,7 @@ export default function App() {
     const [isOffline, setIsOffline]           = useState(false);
     const [bannerDismissed, setBannerDismissed] = useState(false);
     const [shareCopied, setShareCopied]       = useState(false);
+    const [incidents, setIncidents]           = useState([]);
     const pendingAutoCompute                  = useRef(false);
 
     // ── Decode URL params on mount → auto-fill + auto-compute ─────────
@@ -168,6 +169,25 @@ export default function App() {
         };
         checkHealth();
         return () => { cancelled = true; };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        const fetchIncidents = async () => {
+            try {
+                const resp = await fetch(`${API_BASE}/incidents/active?limit=300`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (!cancelled) setIncidents(data);
+                }
+            } catch (err) { console.warn('Incidents fetch failed:', err.message); }
+        };
+        fetchIncidents();
+        const id = setInterval(fetchIncidents, 10 * 60 * 1000);
+        return () => {
+            cancelled = true;
+            clearInterval(id);
+        };
     }, []);
 
     const fetchAQI = useCallback(async (bounds) => {
