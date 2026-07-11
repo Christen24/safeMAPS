@@ -21,10 +21,11 @@ RUN apt-get update && apt-get install -y \
 COPY backend/requirements.txt .
 
 # Install CPU-only PyTorch first to prevent downloading the huge ~2GB CUDA wheel
-RUN pip install --no-cache-dir torch>=2.2.0 --index-url https://download.pytorch.org/whl/cpu \
+RUN pip install --no-cache-dir "torch>=2.2.0" --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
+COPY data_pipeline/ /app/data_pipeline/
 
 EXPOSE 8000
 
