@@ -23,7 +23,7 @@ services:
   # Prevents connection exhaustion under load (/compare = 8 connections/req)
   # Backend connects to pgbouncer:5433 instead of postgis:5432
   pgbouncer:
-    image: bitnami/pgbouncer:1.22.1
+    image: bitnamilegacy/pgbouncer:1.22.1
     container_name: safemaps-pgbouncer
     environment:
       POSTGRESQL_HOST: postgis
