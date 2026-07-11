@@ -37,6 +37,7 @@ services:
       PGBOUNCER_MIN_POOL_SIZE: 2
       PGBOUNCER_RESERVE_POOL_SIZE: 5
       PGBOUNCER_SERVER_IDLE_TIMEOUT: 600
+      PGBOUNCER_PORT: 5432
     expose:
       - "5432"
     depends_on:
