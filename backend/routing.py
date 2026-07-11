@@ -270,7 +270,7 @@ async def find_route(
     avg_aqi = total_aqi_weighted / max(total_time / 60.0, 0.001)
 
     cost_breakdown = CostBreakdown(
-        total_cost=g_score.get(goal_id, 0.0),
+        total_cost=sum(seg.segment_cost for seg in segments),
         travel_time_cost=alpha * (total_time / 60.0),
         aqi_exposure_cost=beta * (total_aqi_weighted / 500.0),
         accident_risk_cost=gamma * sum(
