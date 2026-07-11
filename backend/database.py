@@ -25,6 +25,7 @@ class Database:
             min_size=2,
             max_size=10,
             command_timeout=60,
+            statement_cache_size=0,
         )
 
     async def disconnect(self):
