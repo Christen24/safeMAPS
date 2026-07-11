@@ -15,7 +15,7 @@ export default defineConfig({
                 runtimeCaching: [
                     {
                         // Cache Leaflet tile requests for offline map viewing
-                        urlPattern: /^https:\/\/\{s\}\.tile\.openstreetmap\.org\/.*/i,
+                        urlPattern: /^https:\/\/[a-c]\.tile\.openstreetmap\.org\/.*/i,
                         handler: 'CacheFirst',
                         options: {
                             cacheName: 'osm-tiles',
