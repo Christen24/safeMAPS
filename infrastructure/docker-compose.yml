@@ -23,7 +23,7 @@ services:
   # Prevents connection exhaustion under load (/compare = 8 connections/req)
   # Backend connects to pgbouncer:5433 instead of postgis:5432
   pgbouncer:
-    image: bitnamilegacy/pgbouncer:1.22.1
+    image: bitnami/pgbouncer:1.22.1
     container_name: safemaps-pgbouncer
     environment:
       POSTGRESQL_HOST: postgis
@@ -45,7 +45,7 @@ services:
       postgis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/5432"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U healthroute"]
       interval: 10s
       timeout: 5s
       retries: 5
