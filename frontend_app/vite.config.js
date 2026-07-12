@@ -15,7 +15,7 @@ export default defineConfig({
                 runtimeCaching: [
                     {
                         // Cache Leaflet tile requests for offline map viewing
-                        urlPattern: /^https:\/\/[a-c]\.tile\.openstreetmap\.org\/.*/i,
+                        urlPattern: /^https:\/\/server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\/.*/i,
                         handler: 'CacheFirst',
                         options: {
                             cacheName: 'osm-tiles',
