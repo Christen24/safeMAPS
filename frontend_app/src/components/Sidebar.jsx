@@ -30,6 +30,7 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
     const [displayName, setDisplayName]   = useState('');
     const debounceRef = useRef(null);
     const wrapperRef  = useRef(null);
+    const requestIdRef = useRef(0);
 
     useEffect(() => {
         const h = (e) => {
@@ -52,12 +53,17 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
         setDisplayName('');
         if (debounceRef.current) clearTimeout(debounceRef.current);
         if (q.length >= 3) {
+            const myRequestId = ++requestIdRef.current;
             debounceRef.current = setTimeout(async () => {
                 const res = await geocode(q);
+                if (myRequestId !== requestIdRef.current) return; // stale — discard
                 setSuggestions(res);
                 setShowSuggestions(res.length > 0);
             }, 300);
-        } else { setSuggestions([]); setShowSuggestions(false); }
+        } else {
+            requestIdRef.current++;
+            setSuggestions([]); setShowSuggestions(false);
+        }
     }, []);
 
     const handleSelect = useCallback((item) => {
