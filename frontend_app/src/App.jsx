@@ -107,6 +107,14 @@ export default function App() {
     const [blackspotData, setBlackspotData]   = useState(null);
     const [mapBounds, setMapBounds]           = useState(null);
     const [isOffline, setIsOffline]           = useState(false);
+    // ── Stable refs so callbacks don't recreate on every state change ─
+    const showAQIRef    = useRef(showAQI);
+    const fetchAQIRef   = useRef(null);
+    const originRef     = useRef(origin);
+    const destinationRef = useRef(destination);
+    useEffect(() => { showAQIRef.current = showAQI; }, [showAQI]);
+    useEffect(() => { originRef.current = origin; }, [origin]);
+    useEffect(() => { destinationRef.current = destination; }, [destination]);
     const [bannerDismissed, setBannerDismissed] = useState(false);
     const [shareCopied, setShareCopied]       = useState(false);
     const [incidents, setIncidents]           = useState([]);
@@ -190,6 +198,7 @@ export default function App() {
         };
     }, []);
 
+    // Keep fetchAQIRef in sync so handleBoundsChange can call latest version
     const fetchAQI = useCallback(async (bounds) => {
         if (!bounds) return;
         setLoadingAQI(true);
@@ -203,11 +212,17 @@ export default function App() {
         } catch (err) { console.warn('AQI fetch failed:', err.message); }
         finally { setLoadingAQI(false); }
     }, []);
+    // keep fetchAQIRef in sync so handleBoundsChange can call latest version
+    useEffect(() => { fetchAQIRef.current = fetchAQI; }, [fetchAQI]);
 
+    // Stable callback — does NOT list showAQI in deps; reads via ref instead.
+    // This prevents useMapEvents from getting a new function ref on every
+    // showAQI toggle, which was the root cause of React error #310.
     const handleBoundsChange = useCallback((bounds) => {
         setMapBounds(bounds);
-        if (showAQI) fetchAQI(bounds);
-    }, [showAQI, fetchAQI]);
+        if (showAQIRef.current && fetchAQIRef.current) fetchAQIRef.current(bounds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);  // intentionally empty — reads mutable refs
 
     const handleShowAQI = useCallback((val) => {
         setShowAQI(val);
@@ -324,17 +339,22 @@ export default function App() {
         } finally { setLoading(false); }
     }, [origin, destination, profile, weights, departureTime, isCustomWeight, recordTrip]);
 
+    // Stable callback — reads origin/destination via refs to avoid
+    // giving useMapEvents a new function ref on every click (React #310).
     const handleMapClick = useCallback((latlng) => {
-        if (!origin.lat) {
+        const o = originRef.current;
+        const d = destinationRef.current;
+        if (!o.lat) {
             setOrigin({ lat: latlng.lat.toFixed(6), lon: latlng.lng.toFixed(6) });
-        } else if (!destination.lat) {
+        } else if (!d.lat) {
             setDestination({ lat: latlng.lat.toFixed(6), lon: latlng.lng.toFixed(6) });
         } else {
             setOrigin({ lat: latlng.lat.toFixed(6), lon: latlng.lng.toFixed(6) });
             setDestination({ lat: '', lon: '' });
             setRoutes([]); setSelectedRoute(null); setError(null);
         }
-    }, [origin, destination]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);  // intentionally empty — reads mutable refs
 
     const swapPoints = useCallback(() => {
         setOrigin(destination); setDestination(origin);
