@@ -360,6 +360,16 @@ export default function App() {
         setOrigin(destination); setDestination(origin);
     }, [origin, destination]);
 
+    // ── Load a saved commute (one-tap re-route) ────────────────────
+    const handleLoadCommute = useCallback((comOrigin, comDest, comProfile) => {
+        setOrigin(comOrigin);
+        setDestination(comDest);
+        handleProfileChange(comProfile);
+        setRoutes([]); setSelectedRoute(null); setError(null);
+        setTimeout(() => computeRoute(), 200);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [handleProfileChange]);
+
     if (view === 'landing') {
         return <LandingPage onStart={() => setView('dashboard')} />;
     }
@@ -379,16 +389,6 @@ export default function App() {
             </div>
         );
     }
-
-    // ── Load a saved commute (one-tap re-route) ────────────────────
-    const handleLoadCommute = useCallback((comOrigin, comDest, comProfile) => {
-        setOrigin(comOrigin);
-        setDestination(comDest);
-        handleProfileChange(comProfile);
-        setRoutes([]); setSelectedRoute(null); setError(null);
-        setTimeout(() => computeRoute(), 200);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [handleProfileChange]);
 
     return (
         <div className="app" style={{ flexDirection: 'column' }}>
