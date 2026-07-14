@@ -23,6 +23,14 @@ async function geocode(query) {
     } catch { return []; }
 }
 
+function formatSuggestion(display_name) {
+    const parts = display_name.split(',').map(p => p.trim());
+    return {
+        name:   parts.slice(0, 3).join(', '),
+        detail: parts.slice(3, 5).join(', '),
+    };
+}
+
 const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indicator }) {
     const [query, setQuery]               = useState('');
     const [suggestions, setSuggestions]   = useState([]);
@@ -41,10 +49,19 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
         return () => document.removeEventListener('mousedown', h);
     }, []);
 
+    const prevCoordRef = useRef('');
+
     useEffect(() => {
-        if (value.lat && value.lon && !displayName)
-            setDisplayName(`${(+value.lat).toFixed(4)}, ${(+value.lon).toFixed(4)}`);
-        if (!value.lat && !value.lon) { setDisplayName(''); setQuery(''); }
+        const coordKey = `${value.lat},${value.lon}`;
+        if (value.lat && value.lon && coordKey !== prevCoordRef.current) {
+            prevCoordRef.current = coordKey;
+            setDisplayName(d => d && d.includes(',') && d.includes('.') ? d :
+                `${(+value.lat).toFixed(4)}, ${(+value.lon).toFixed(4)}`);
+        }
+        if (!value.lat && !value.lon) {
+            prevCoordRef.current = '';
+            setDisplayName(''); setQuery('');
+        }
     }, [value.lat, value.lon]);
 
     const handleChange = useCallback((e) => {
@@ -67,8 +84,8 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
     }, []);
 
     const handleSelect = useCallback((item) => {
-        const short = item.display_name.split(',').slice(0, 2).join(', ');
-        setDisplayName(short);
+        const fmt = formatSuggestion(item.display_name);
+        setDisplayName(fmt.name);
         setQuery('');
         setSuggestions([]);
         setShowSuggestions(false);
@@ -90,16 +107,15 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
             </div>
             {showSuggestions && (
                 <ul className="geocode-dropdown">
-                    {suggestions.map((s, i) => (
-                        <li className="geocode-option" key={i} onClick={() => handleSelect(s)}>
-                            <span className="suggestion-name">
-                                {s.display_name.split(',').slice(0, 2).join(', ')}
-                            </span>
-                            <span className="suggestion-detail">
-                                {s.display_name.split(',').slice(2, 4).join(', ')}
-                            </span>
-                        </li>
-                    ))}
+                    {suggestions.map((s, i) => {
+                        const fmt = formatSuggestion(s.display_name);
+                        return (
+                            <li className="geocode-option" key={i} onClick={() => handleSelect(s)}>
+                                <span className="suggestion-name">{fmt.name}</span>
+                                <span className="suggestion-detail">{fmt.detail}</span>
+                            </li>
+                        );
+                    })}
                 </ul>
             )}
         </div>

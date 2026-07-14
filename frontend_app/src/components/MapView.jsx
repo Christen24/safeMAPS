@@ -114,6 +114,39 @@ function buildColoredSegments(segments) {
     return runs;
 }
 
+function useMapZoom() {
+    const map = useMap();
+    const [zoom, setZoom] = useState(map.getZoom());
+    useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
+    return zoom;
+}
+
+function aqiRadius(zoom) {
+    return Math.max(4, Math.round(0.7 * Math.pow(2, zoom - 11)));
+}
+
+function AqiHeatmap({ aqiData }) {
+    const zoom = useMapZoom();
+    if (!aqiData?.features) return null;
+    return (
+        <>
+            {aqiData.features.map((f, i) => (
+                <CircleMarker
+                    key={`aqi-${f.properties.cell_id ?? i}`}
+                    center={[f.properties.center_lat, f.properties.center_lon]}
+                    radius={aqiRadius(zoom)}
+                    pathOptions={{
+                        color:       aqiColor(f.properties.aqi),
+                        weight:      0.5,
+                        fillColor:   aqiColor(f.properties.aqi),
+                        fillOpacity: 0.55,
+                    }}
+                />
+            ))}
+        </>
+    );
+}
+
 // ── Debounced map events ──────────────────────────────────────
 function MapEvents({ onMapClick, onBoundsChange }) {
     const debounceRef = useRef(null);
@@ -202,33 +235,11 @@ export default function MapView({
     origin, destination, selectedRoute, routes,
     showAQI, setShowAQI, showBlackspots, setShowBlackspots,
     showIncidents, setShowIncidents,
-    aqiData, blackspotData, loadingAQI,
+    aqiData, blackspotData, incidentData, loadingAQI,
     loading, onMapClick, onBoundsChange,
 }) {
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
-
-    // ── Incident data fetch (every 10 min) ──────────────────────
-    const [incidentData, setIncidentData] = useState(null);
-    const [loadingIncidents, setLoadingIncidents] = useState(false);
-
-    const fetchIncidents = useCallback(async () => {
-        setLoadingIncidents(true);
-        try {
-            const resp = await fetch('/api/incidents/active?limit=300');
-            if (resp.ok) {
-                const data = await resp.json();
-                setIncidentData(data);
-            }
-        } catch { /* silently fail — incidents are supplementary */ }
-        finally { setLoadingIncidents(false); }
-    }, []);
-
-    useEffect(() => {
-        fetchIncidents();
-        const id = setInterval(fetchIncidents, 10 * 60 * 1000); // 10 min
-        return () => clearInterval(id);
-    }, [fetchIncidents]);
 
     return (
         <div className="map-container">
@@ -309,18 +320,7 @@ export default function MapView({
                 {selectedRoute && <SelectedRoute route={selectedRoute} />}
 
                 {/* AQI heatmap circles */}
-                {showAQI && aqiData?.features?.map((f, i) => (
-                    <CircleMarker
-                        key={`aqi-${i}`}
-                        center={[f.properties.center_lat, f.properties.center_lon]}
-                        radius={5}
-                        pathOptions={{
-                            color:       'transparent',
-                            fillColor:   aqiColor(f.properties.aqi),
-                            fillOpacity: 0.28,
-                        }}
-                    />
-                ))}
+                {showAQI && <AqiHeatmap aqiData={aqiData} />}
 
                 {/* Accident blackspots */}
                 {showBlackspots && blackspotData?.features?.map((f, i) => {
@@ -424,7 +424,7 @@ export default function MapView({
                     ⚠ Blackspots
                 </button>
                 <button
-                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''} ${loadingIncidents ? 'loading' : ''}`}
+                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''}`}
                     onClick={() => setShowIncidents(!showIncidents)}
                 >
                     ▲ Live Incidents

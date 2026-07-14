@@ -382,7 +382,7 @@ export default function App() {
                 {showBanner && (
                     <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
                 )}
-                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.length ?? 0} />
+                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.total ?? 0} />
                 <div className="main-content gs-page" style={{ marginTop: 0 }}>
                     <GreenScore />
                 </div>
@@ -396,7 +396,7 @@ export default function App() {
             {showBanner && (
                 <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
             )}
-            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.length ?? 0} />
+            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.total ?? 0} />
             <div className="main-content">
                 <Sidebar
                     origin={origin} destination={destination}
@@ -418,6 +418,7 @@ export default function App() {
                     showBlackspots={showBlackspots} setShowBlackspots={setShowBlackspots}
                     showIncidents={showIncidents} setShowIncidents={setShowIncidents}
                     aqiData={aqiData} blackspotData={blackspotData}
+                    incidentData={incidents}
                     loadingAQI={loadingAQI}
                     loading={loading} onMapClick={handleMapClick}
                     onBoundsChange={handleBoundsChange}

@@ -221,3 +221,23 @@ async def list_stations():
         "total":       len(stations),
         "models_dir":  str(_MODELS_DIR),
     }
+
+
+# ── Phase 5: AQI History ──────────────────────────────────────────────
+
+@router.get("/history")
+async def aqi_history(
+    min_lat: float, max_lat: float,
+    min_lon: float, max_lon: float,
+    days: int = 7
+):
+    rows = await db.fetch("""
+        SELECT DATE(recorded_at) as day, AVG(aqi) as avg_aqi
+        FROM aqi_history
+        WHERE lat BETWEEN $1 AND $2
+          AND lon BETWEEN $3 AND $4
+          AND recorded_at >= NOW() - ($5 || ' days')::INTERVAL
+        GROUP BY DATE(recorded_at)
+        ORDER BY day DESC
+    """, min_lat, max_lat, min_lon, max_lon, str(days))
+    return {"readings": [{"day": str(r["day"]), "aqi": float(r["avg_aqi"])} for r in rows]}
