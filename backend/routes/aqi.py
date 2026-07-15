@@ -172,6 +172,53 @@ async def predict_aqi(
 
 # ── Phase 5: Stations list ────────────────────────────────────────────
 
+@router.get("/history")
+async def aqi_history(
+    min_lat: float = Query(..., ge=-90,  le=90),
+    max_lat: float = Query(..., ge=-90,  le=90),
+    min_lon: float = Query(..., ge=-180, le=180),
+    max_lon: float = Query(..., ge=-180, le=180),
+    days: int = Query(default=7, ge=1, le=30),
+):
+    """
+    Return daily average AQI readings for a bounding box over the last N days.
+    Used by the useAQITrend hook to compute the 7-day AQI trend badge
+    shown on saved commutes.
+
+    Returns:
+        { readings: [{day: "YYYY-MM-DD", aqi: float}] }
+        ordered newest first.
+
+    Falls back gracefully when aqi_history has insufficient data —
+    the hook requires at least 5 readings before showing a trend badge.
+    """
+    try:
+        rows = await db.fetch("""
+            SELECT
+                DATE(recorded_at AT TIME ZONE 'Asia/Kolkata') AS day,
+                ROUND(AVG(aqi)::numeric, 1)                   AS avg_aqi
+            FROM aqi_history
+            WHERE lat BETWEEN $1 AND $2
+              AND lon BETWEEN $3 AND $4
+              AND aqi IS NOT NULL
+              AND recorded_at >= NOW() - ($5 || ' days')::INTERVAL
+            GROUP BY DATE(recorded_at AT TIME ZONE 'Asia/Kolkata')
+            ORDER BY day DESC;
+        """, min_lat, max_lat, min_lon, max_lon, str(days))
+
+        return {
+            "readings": [
+                {"day": str(r["day"]), "aqi": float(r["avg_aqi"])}
+                for r in rows
+            ],
+            "days_requested": days,
+            "days_available": len(rows),
+        }
+    except Exception as exc:
+        # Graceful fallback — history table may not have data yet
+        return {"readings": [], "days_requested": days, "days_available": 0}
+
+
 @router.get("/stations")
 async def list_stations():
     """
@@ -221,23 +268,3 @@ async def list_stations():
         "total":       len(stations),
         "models_dir":  str(_MODELS_DIR),
     }
-
-
-# ── Phase 5: AQI History ──────────────────────────────────────────────
-
-@router.get("/history")
-async def aqi_history(
-    min_lat: float, max_lat: float,
-    min_lon: float, max_lon: float,
-    days: int = 7
-):
-    rows = await db.fetch("""
-        SELECT DATE(recorded_at) as day, AVG(aqi) as avg_aqi
-        FROM aqi_history
-        WHERE lat BETWEEN $1 AND $2
-          AND lon BETWEEN $3 AND $4
-          AND recorded_at >= NOW() - ($5 || ' days')::INTERVAL
-        GROUP BY DATE(recorded_at)
-        ORDER BY day DESC
-    """, min_lat, max_lat, min_lon, max_lon, str(days))
-    return {"readings": [{"day": str(r["day"]), "aqi": float(r["avg_aqi"])} for r in rows]}

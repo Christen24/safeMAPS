@@ -3,6 +3,49 @@ import {
     MapContainer, TileLayer, Polyline, Marker,
     Popup, CircleMarker, useMapEvents, useMap,
 } from 'react-leaflet';
+
+// ── Bug 2 fix: zoom-aware AQI circle radius ───────────────────
+// At zoom 12 (city view) radius ~11px covers a 100m grid cell.
+// Without this all cells render at radius=5 → gaps between circles
+// → the "scattered" heatmap appearance.
+function aqiRadius(zoom) {
+    // Formula: 0.7 × 2^(zoom-11), clamped 4–32
+    return Math.max(4, Math.min(32, Math.round(0.7 * Math.pow(2, zoom - 11))));
+}
+
+// Hook: tracks current Leaflet map zoom level reactively
+function useMapZoom() {
+    const map = useMap();
+    const [zoom, setZoom] = useState(map.getZoom());
+    useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
+    return zoom;
+}
+
+// AQI heatmap layer extracted so it can read zoom via hook
+function AQILayer({ aqiData }) {
+    const zoom = useMapZoom();
+    const r = aqiRadius(zoom);
+    if (!aqiData?.features) return null;
+    return (
+        <>
+            {aqiData.features.map((f, i) => (
+                <CircleMarker
+                    // Bug 6 fix: stable key from cell_id prevents full re-render on pan
+                    key={`aqi-${f.properties.cell_id ?? i}`}
+                    center={[f.properties.center_lat, f.properties.center_lon]}
+                    radius={r}
+                    pathOptions={{
+                        // Bug 7 fix: thin matching stroke makes circles legible on satellite
+                        color:       aqiColor(f.properties.aqi),
+                        weight:      0.5,
+                        fillColor:   aqiColor(f.properties.aqi),
+                        fillOpacity: 0.55,   // was 0.28 — too faint on ArcGIS satellite tile
+                    }}
+                />
+            ))}
+        </>
+    );
+}
 import L from 'leaflet';
 
 // ── Fix default Leaflet icon paths ────────────────────────────
@@ -114,39 +157,6 @@ function buildColoredSegments(segments) {
     return runs;
 }
 
-function useMapZoom() {
-    const map = useMap();
-    const [zoom, setZoom] = useState(map.getZoom());
-    useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
-    return zoom;
-}
-
-function aqiRadius(zoom) {
-    return Math.max(4, Math.round(0.7 * Math.pow(2, zoom - 11)));
-}
-
-function AqiHeatmap({ aqiData }) {
-    const zoom = useMapZoom();
-    if (!aqiData?.features) return null;
-    return (
-        <>
-            {aqiData.features.map((f, i) => (
-                <CircleMarker
-                    key={`aqi-${f.properties.cell_id ?? i}`}
-                    center={[f.properties.center_lat, f.properties.center_lon]}
-                    radius={aqiRadius(zoom)}
-                    pathOptions={{
-                        color:       aqiColor(f.properties.aqi),
-                        weight:      0.5,
-                        fillColor:   aqiColor(f.properties.aqi),
-                        fillOpacity: 0.55,
-                    }}
-                />
-            ))}
-        </>
-    );
-}
-
 // ── Debounced map events ──────────────────────────────────────
 function MapEvents({ onMapClick, onBoundsChange }) {
     const debounceRef = useRef(null);
@@ -230,12 +240,17 @@ function SelectedRoute({ route }) {
 }
 
 // ── Main MapView ────────────────────────────────────────
-// Accepts showIncidents/setShowIncidents props from App.jsx
+// Bug 3 fix: incidentData is now passed as a prop from App.jsx
+// (which already fetches incidents every 10 min).
+// This removes the duplicate fetch that was previously here,
+// which caused 2 API calls every 10 min and could show
+// different counts on the NavBar vs map markers.
 export default function MapView({
     origin, destination, selectedRoute, routes,
     showAQI, setShowAQI, showBlackspots, setShowBlackspots,
     showIncidents, setShowIncidents,
-    aqiData, blackspotData, incidentData, loadingAQI,
+    aqiData, blackspotData, loadingAQI,
+    incidentData,           // Bug 3 fix: received from App.jsx, not fetched here
     loading, onMapClick, onBoundsChange,
 }) {
     const toLL = (r) =>
@@ -319,8 +334,8 @@ export default function MapView({
                 {/* Selected route — AQI-coloured segments */}
                 {selectedRoute && <SelectedRoute route={selectedRoute} />}
 
-                {/* AQI heatmap circles */}
-                {showAQI && <AqiHeatmap aqiData={aqiData} />}
+                {/* AQI heatmap — zoom-aware radius, stable keys, satellite contrast */}
+                {showAQI && <AQILayer aqiData={aqiData} />}
 
                 {/* Accident blackspots */}
                 {showBlackspots && blackspotData?.features?.map((f, i) => {
@@ -424,7 +439,7 @@ export default function MapView({
                     ⚠ Blackspots
                 </button>
                 <button
-                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''}`}
+                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''} ${loadingIncidents ? 'loading' : ''}`}
                     onClick={() => setShowIncidents(!showIncidents)}
                 >
                     ▲ Live Incidents

@@ -3,7 +3,9 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies for geospatial libs, osmium CLI tool, and compilation headers for python-osmium
-RUN apt-get update && apt-get install -y \
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN for i in 1 2 3 4 5; do \
+    apt-get update && apt-get install -y \
     build-essential \
     cmake \
     libgeos-dev \
@@ -16,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     libexpat1-dev \
     osmium-tool \
     curl \
+    && break || sleep 15; done \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .

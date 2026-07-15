@@ -23,11 +23,15 @@ async function geocode(query) {
     } catch { return []; }
 }
 
+// ── Bug 4 fix: smarter display name truncation ────────────────
+// Nominatim returns "Road Name, Area, City, State, Country"
+// We show "Road Name, Area" as name and "City, State" as detail
+// This disambiguates e.g. two "1st Cross Road" results in different areas
 function formatSuggestion(display_name) {
-    const parts = display_name.split(',').map(p => p.trim());
+    const parts = display_name.split(',').map(p => p.trim()).filter(Boolean);
     return {
-        name:   parts.slice(0, 3).join(', '),
-        detail: parts.slice(3, 5).join(', '),
+        name:   parts.slice(0, 2).join(', '),
+        detail: parts.slice(2, 4).join(', '),
     };
 }
 
@@ -36,9 +40,13 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
     const [suggestions, setSuggestions]   = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [displayName, setDisplayName]   = useState('');
-    const debounceRef = useRef(null);
-    const wrapperRef  = useRef(null);
+    const debounceRef  = useRef(null);
+    const wrapperRef   = useRef(null);
     const requestIdRef = useRef(0);
+    // Bug 1 fix: track the last coord pair we synced so we always
+    // update displayName when coordinates actually change (e.g. map click
+    // after a place was already selected from the dropdown).
+    const prevCoordRef = useRef('');
 
     useEffect(() => {
         const h = (e) => {
@@ -49,18 +57,25 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
         return () => document.removeEventListener('mousedown', h);
     }, []);
 
-    const prevCoordRef = useRef('');
-
     useEffect(() => {
         const coordKey = `${value.lat},${value.lon}`;
-        if (value.lat && value.lon && coordKey !== prevCoordRef.current) {
-            prevCoordRef.current = coordKey;
-            setDisplayName(d => d && d.includes(',') && d.includes('.') ? d :
-                `${(+value.lat).toFixed(4)}, ${(+value.lon).toFixed(4)}`);
-        }
-        if (!value.lat && !value.lon) {
+        if (value.lat && value.lon) {
+            // Only update if coordinates genuinely changed.
+            // This fires on both map-click (always show coords) and
+            // on geocode-select (displayName already set to place name —
+            // don't overwrite it with raw coords unless coords changed again).
+            if (coordKey !== prevCoordRef.current) {
+                prevCoordRef.current = coordKey;
+                // If no named display yet (e.g. map click), show coords.
+                // If there is a named display (place selected), keep it —
+                // the name was set by handleSelect for these exact coords.
+                setDisplayName(d => d ? d : `${(+value.lat).toFixed(4)}, ${(+value.lon).toFixed(4)}`);
+            }
+        } else {
+            // Coordinates cleared (swap, reset, third map click)
             prevCoordRef.current = '';
-            setDisplayName(''); setQuery('');
+            setDisplayName('');
+            setQuery('');
         }
     }, [value.lat, value.lon]);
 
@@ -84,8 +99,11 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
     }, []);
 
     const handleSelect = useCallback((item) => {
-        const fmt = formatSuggestion(item.display_name);
-        setDisplayName(fmt.name);
+        const { name } = formatSuggestion(item.display_name);
+        // Set prevCoordRef so the useEffect coord-sync above recognises
+        // this coord pair is already named and won't overwrite displayName.
+        prevCoordRef.current = `${item.lat},${item.lon}`;
+        setDisplayName(name);
         setQuery('');
         setSuggestions([]);
         setShowSuggestions(false);
@@ -108,11 +126,11 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
             {showSuggestions && (
                 <ul className="geocode-dropdown">
                     {suggestions.map((s, i) => {
-                        const fmt = formatSuggestion(s.display_name);
+                        const { name, detail } = formatSuggestion(s.display_name);
                         return (
-                            <li className="geocode-option" key={i} onClick={() => handleSelect(s)}>
-                                <span className="suggestion-name">{fmt.name}</span>
-                                <span className="suggestion-detail">{fmt.detail}</span>
+                            <li className="geocode-option" key={`${s.lat}-${s.lon}-${i}`} onClick={() => handleSelect(s)}>
+                                <span className="suggestion-name">{name}</span>
+                                {detail && <span className="suggestion-detail">{detail}</span>}
                             </li>
                         );
                     })}
