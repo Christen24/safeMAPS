@@ -9,26 +9,62 @@ const PROFILES = [
     { id: 'balanced',   label: 'Balanced',   sub: 'Weighted',       icon: '⚖️', color: 'var(--violet)' },
 ];
 
+const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+
 async function geocode(query) {
     if (!query || query.length < 3) return [];
     try {
         const resp = await fetch(
-            `https://nominatim.openstreetmap.org/search?` +
-            `q=${encodeURIComponent(query + ', Bangalore')}&format=json&limit=5`,
+            `${NOMINATIM}?q=${encodeURIComponent(query + ', Bangalore')}&format=json&limit=6&addressdetails=1`,
             { headers: { 'Accept-Language': 'en' } }
         );
         if (!resp.ok) return [];
         const results = await resp.json();
-        return results.map(({ lat, lon, display_name }) => ({ lat, lon, display_name }));
+        return results.map(({ lat, lon, display_name, address }) => ({
+            lat, lon, display_name,
+            // Prefer address parts for smarter formatting
+            road:         address?.road || address?.pedestrian || address?.footway,
+            suburb:       address?.suburb || address?.neighbourhood,
+            city:         address?.city || address?.town || 'Bangalore',
+        }));
     } catch { return []; }
+}
+
+function reverseGeocode(lat, lon) {
+    return fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=en`,
+        { headers: { 'Accept-Language': 'en' } }
+    ).then(r => r.ok ? r.json() : null).catch(() => null);
 }
 
 // ── Bug 4 fix: smarter display name truncation ────────────────
 // Nominatim returns "Road Name, Area, City, State, Country"
 // We show "Road Name, Area" as name and "City, State" as detail
 // This disambiguates e.g. two "1st Cross Road" results in different areas
-function formatSuggestion(display_name) {
+// ── Recent searches (localStorage, max 5 per field) ──────────────────
+const RECENTS_KEY = 'safemaps_recent_places';
+
+function loadRecents() {
+    try { return JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]'); }
+    catch { return []; }
+}
+
+function saveRecent(item) {
+    const existing = loadRecents().filter(r => r.lat !== item.lat || r.lon !== item.lon);
+    const updated  = [item, ...existing].slice(0, 5);
+    try { localStorage.setItem(RECENTS_KEY, JSON.stringify(updated)); }
+    catch { /* storage full — ignore */ }
+}
+
+
+function formatSuggestion(display_name, addressParts = {}) {
     const parts = display_name.split(',').map(p => p.trim()).filter(Boolean);
+    if (addressParts.road && addressParts.suburb) {
+        return {
+            name:   `${addressParts.road}, ${addressParts.suburb}`,
+            detail: addressParts.city || parts.slice(2, 3).join(''),
+        };
+    }
     return {
         name:   parts.slice(0, 2).join(', '),
         detail: parts.slice(2, 4).join(', '),
@@ -38,14 +74,16 @@ function formatSuggestion(display_name) {
 const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indicator }) {
     const [query, setQuery]               = useState('');
     const [suggestions, setSuggestions]   = useState([]);
+    const [recents, setRecents]           = useState(loadRecents);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [displayName, setDisplayName]   = useState('');
+    const [activeIdx, setActiveIdx]       = useState(-1);
+    const [locating, setLocating]         = useState(false);
+    const [searching, setSearching]       = useState(false);
     const debounceRef  = useRef(null);
     const wrapperRef   = useRef(null);
+    const inputRef     = useRef(null);
     const requestIdRef = useRef(0);
-    // Bug 1 fix: track the last coord pair we synced so we always
-    // update displayName when coordinates actually change (e.g. map click
-    // after a place was already selected from the dropdown).
     const prevCoordRef = useRef('');
 
     useEffect(() => {
@@ -60,19 +98,11 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
     useEffect(() => {
         const coordKey = `${value.lat},${value.lon}`;
         if (value.lat && value.lon) {
-            // Only update if coordinates genuinely changed.
-            // This fires on both map-click (always show coords) and
-            // on geocode-select (displayName already set to place name —
-            // don't overwrite it with raw coords unless coords changed again).
             if (coordKey !== prevCoordRef.current) {
                 prevCoordRef.current = coordKey;
-                // If no named display yet (e.g. map click), show coords.
-                // If there is a named display (place selected), keep it —
-                // the name was set by handleSelect for these exact coords.
                 setDisplayName(d => d ? d : `${(+value.lat).toFixed(4)}, ${(+value.lon).toFixed(4)}`);
             }
         } else {
-            // Coordinates cleared (swap, reset, third map click)
             prevCoordRef.current = '';
             setDisplayName('');
             setQuery('');
@@ -83,32 +113,97 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
         const q = e.target.value;
         setQuery(q);
         setDisplayName('');
+        setActiveIdx(-1);
         if (debounceRef.current) clearTimeout(debounceRef.current);
         if (q.length >= 3) {
-            const myRequestId = ++requestIdRef.current;
+            const myId = ++requestIdRef.current;
+            setSearching(true);
             debounceRef.current = setTimeout(async () => {
                 const res = await geocode(q);
-                if (myRequestId !== requestIdRef.current) return; // stale — discard
+                if (myId !== requestIdRef.current) return;
+                setSearching(false);
                 setSuggestions(res);
-                setShowSuggestions(res.length > 0);
-            }, 300);
+                setShowSuggestions(true);
+            }, 280);
         } else {
             requestIdRef.current++;
-            setSuggestions([]); setShowSuggestions(false);
+            setSearching(false);
+            setSuggestions([]);
+            setShowSuggestions(q.length === 0 && recents.length > 0);
         }
-    }, []);
+    }, [recents]);
 
     const handleSelect = useCallback((item) => {
-        const { name } = formatSuggestion(item.display_name);
-        // Set prevCoordRef so the useEffect coord-sync above recognises
-        // this coord pair is already named and won't overwrite displayName.
+        const { name } = formatSuggestion(item.display_name, item);
         prevCoordRef.current = `${item.lat},${item.lon}`;
         setDisplayName(name);
         setQuery('');
         setSuggestions([]);
         setShowSuggestions(false);
+        setActiveIdx(-1);
+        saveRecent({ lat: item.lat, lon: item.lon, display_name: item.display_name });
+        setRecents(loadRecents());
         onSelect({ lat: item.lat, lon: item.lon });
     }, [onSelect]);
+
+    const handleClear = useCallback(() => {
+        setDisplayName('');
+        setQuery('');
+        setSuggestions([]);
+        setShowSuggestions(false);
+        setActiveIdx(-1);
+        prevCoordRef.current = '';
+        onSelect({ lat: '', lon: '' });
+        inputRef.current?.focus();
+    }, [onSelect]);
+
+    const handleGeolocate = useCallback(() => {
+        if (!navigator.geolocation) return;
+        setLocating(true);
+        navigator.geolocation.getCurrentPosition(
+            async (pos) => {
+                const { latitude: lat, longitude: lon } = pos.coords;
+                setLocating(false);
+                const data = await reverseGeocode(lat, lon);
+                const name = data?.display_name
+                    ? formatSuggestion(data.display_name).name
+                    : `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                const item = { lat: String(lat), lon: String(lon), display_name: data?.display_name || name };
+                prevCoordRef.current = `${item.lat},${item.lon}`;
+                setDisplayName(name);
+                setShowSuggestions(false);
+                saveRecent(item);
+                setRecents(loadRecents());
+                onSelect({ lat: item.lat, lon: item.lon });
+            },
+            () => setLocating(false),
+            { timeout: 8000 }
+        );
+    }, [onSelect]);
+
+    const allItems = query.length >= 3 ? suggestions : recents;
+
+    const handleKeyDown = useCallback((e) => {
+        if (!showSuggestions) return;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActiveIdx(i => Math.min(i + 1, allItems.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActiveIdx(i => Math.max(i - 1, -1));
+        } else if (e.key === 'Enter' && activeIdx >= 0) {
+            e.preventDefault();
+            handleSelect(allItems[activeIdx]);
+        } else if (e.key === 'Escape') {
+            setShowSuggestions(false);
+            setActiveIdx(-1);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showSuggestions, activeIdx, allItems, handleSelect]);
+
+    const inputValue = displayName || query;
+    const showClear  = inputValue.length > 0;
+    const showRecents = query.length === 0 && recents.length > 0;
 
     return (
         <div className="place-input-wrapper" ref={wrapperRef}>
@@ -117,20 +212,53 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
                     <span className={`pip-dot ${indicator}`} />
                 </div>
                 <input
+                    ref={inputRef}
                     placeholder={placeholder}
-                    value={displayName || query}
+                    value={inputValue}
                     onChange={handleChange}
-                    onFocus={() => { if (suggestions.length) setShowSuggestions(true); }}
+                    onFocus={() => {
+                        if (recents.length > 0 || suggestions.length > 0)
+                            setShowSuggestions(true);
+                    }}
+                    onKeyDown={handleKeyDown}
+                    autoComplete="off"
+                    spellCheck={false}
                 />
+                {searching && <span className="input-spinner" title="Searching…">⟳</span>}
+                {showClear && !searching && (
+                    <button className="input-clear-btn" onClick={handleClear} title="Clear" tabIndex={-1}>×</button>
+                )}
+                <button
+                    className={`input-locate-btn ${locating ? 'locating' : ''}`}
+                    onClick={handleGeolocate}
+                    title="Use my location"
+                    tabIndex={-1}
+                >📍</button>
             </div>
-            {showSuggestions && (
-                <ul className="geocode-dropdown">
-                    {suggestions.map((s, i) => {
-                        const { name, detail } = formatSuggestion(s.display_name);
+
+            {showSuggestions && allItems.length > 0 && (
+                <ul className="geocode-dropdown" role="listbox">
+                    {showRecents && (
+                        <li className="geocode-section-label">Recent</li>
+                    )}
+                    {allItems.map((s, i) => {
+                        const { name, detail } = formatSuggestion(s.display_name, s);
                         return (
-                            <li className="geocode-option" key={`${s.lat}-${s.lon}-${i}`} onClick={() => handleSelect(s)}>
-                                <span className="suggestion-name">{name}</span>
-                                {detail && <span className="suggestion-detail">{detail}</span>}
+                            <li
+                                className={`geocode-option ${i === activeIdx ? 'active' : ''}`}
+                                key={`${s.lat}-${s.lon}-${i}`}
+                                role="option"
+                                aria-selected={i === activeIdx}
+                                onMouseEnter={() => setActiveIdx(i)}
+                                onClick={() => handleSelect(s)}
+                            >
+                                <span className="suggestion-icon">
+                                    {showRecents && i < recents.length ? '🕐' : '📍'}
+                                </span>
+                                <span className="suggestion-text">
+                                    <span className="suggestion-name">{name}</span>
+                                    {detail && <span className="suggestion-detail">{detail}</span>}
+                                </span>
                             </li>
                         );
                     })}
@@ -139,6 +267,7 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
         </div>
     );
 });
+
 
 export default function Sidebar({
     origin, destination, setOrigin, setDestination,

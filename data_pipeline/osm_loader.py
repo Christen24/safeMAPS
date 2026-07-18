@@ -233,6 +233,30 @@ async def import_to_postgis(
         osm_to_id: dict[int, int] = {r["osm_id"]: r["id"] for r in rows}
         logger.info(f"OSM→internal ID map: {len(osm_to_id):,} entries.")
 
+        # ── Find intersection nodes (referenced by 2+ ways) ──────────
+        # In OSM: ways share nodes at junctions. Nodes appearing in 1 way
+        # are shape/curve nodes — not real intersections.
+        # We split edges only at true intersections so we get one DB edge per
+        # road segment between junctions, with full intermediate geometry.
+        logger.info("Detecting intersection nodes...")
+        node_way_count: dict[int, int] = {}
+        for way in ways:
+            for nid in way["node_ids"]:
+                if nid in nodes_by_osm_id:
+                    node_way_count[nid] = node_way_count.get(nid, 0) + 1
+
+        # A node is an intersection if it appears in 2+ ways, OR is a
+        # first/last node of any way (endpoint).
+        endpoint_nodes: set[int] = set()
+        for way in ways:
+            nids = way["node_ids"]
+            if nids:
+                endpoint_nodes.add(nids[0])
+                endpoint_nodes.add(nids[-1])
+
+        def is_intersection(nid: int) -> bool:
+            return node_way_count.get(nid, 0) >= 2 or nid in endpoint_nodes
+
         # ── Build edge records from ways ──────────────────────────────
         logger.info("Building edge records from ways...")
         edge_records = []
@@ -241,10 +265,8 @@ async def import_to_postgis(
             highway = way["highway"]
             oneway_tag = way["oneway"].lower().strip()
             is_oneway = oneway_tag in ("yes", "true", "1", "-1")
-            # "-1" means one-way in reverse — we handle this by swapping nodes
             reverse_oneway = oneway_tag == "-1"
 
-            # Parse speed
             raw_speed = way["maxspeed"].replace(" mph", "").replace(" kph", "").strip()
             try:
                 speed_kmh = float(raw_speed)
@@ -253,40 +275,60 @@ async def import_to_postgis(
             except ValueError:
                 speed_kmh = DEFAULT_SPEEDS.get(highway, 30.0)
 
-            # Walk node_ids in pairs to produce edge segments
             node_ids = way["node_ids"]
-            for j in range(len(node_ids) - 1):
-                u_osm = node_ids[j]
-                v_osm = node_ids[j + 1]
 
-                # Skip if either node is outside bbox or wasn't inserted
+            # Walk the node list, collecting shape nodes between intersections.
+            # When we hit an intersection node (or end of way), emit an edge.
+            import math
+            R = 6_371_000
+
+            seg_start_idx = 0
+            for k in range(1, len(node_ids)):
+                nid = node_ids[k]
+                if not (is_intersection(nid) or k == len(node_ids) - 1):
+                    continue  # intermediate shape node — keep collecting
+
+                # Segment runs from seg_start_idx to k (inclusive)
+                seg_nids = node_ids[seg_start_idx:k + 1]
+
+                u_osm = seg_nids[0]
+                v_osm = seg_nids[-1]
+
                 u_id = osm_to_id.get(u_osm)
                 v_id = osm_to_id.get(v_osm)
                 if u_id is None or v_id is None:
+                    seg_start_idx = k
                     continue
 
                 u_coords = nodes_by_osm_id.get(u_osm)
                 v_coords = nodes_by_osm_id.get(v_osm)
                 if u_coords is None or v_coords is None:
+                    seg_start_idx = k
                     continue
 
                 u_lon, u_lat = u_coords
                 v_lon, v_lat = v_coords
 
-                # Haversine length
-                import math
-                R = 6_371_000
+                # Haversine length (endpoint-to-endpoint — good enough)
                 phi1, phi2 = math.radians(u_lat), math.radians(v_lat)
                 dphi = math.radians(v_lat - u_lat)
                 dlam = math.radians(v_lon - u_lon)
                 a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
                 length_m = 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-                # WKT for the 2-point LineString
-                wkt = f"LINESTRING({u_lon} {u_lat}, {v_lon} {v_lat})"
+                # Full multi-point WKT — all shape nodes between intersections
+                coord_parts = []
+                for nid2 in seg_nids:
+                    c = nodes_by_osm_id.get(nid2)
+                    if c:
+                        coord_parts.append(f"{c[0]} {c[1]}")
+
+                if len(coord_parts) < 2:
+                    coord_parts = [f"{u_lon} {u_lat}", f"{v_lon} {v_lat}"]
+
+                wkt = f"LINESTRING({', '.join(coord_parts)})"
 
                 if reverse_oneway:
-                    # Road goes v → u only
                     src_id, tgt_id = v_id, u_id
                 else:
                     src_id, tgt_id = u_id, v_id
@@ -302,6 +344,8 @@ async def import_to_postgis(
                     is_oneway,
                     wkt,
                 ))
+
+                seg_start_idx = k  # next segment starts at current intersection
 
         logger.info(f"Built {len(edge_records):,} edge records. Inserting...")
 
