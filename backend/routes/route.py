@@ -66,10 +66,31 @@ async def compute_route(request: RouteRequest):
     )
 
     if not route:
+        # Fix R1: distinguish between "no road near point" and "no path found"
+        # so users get actionable feedback instead of a generic 404
+        from spatial_queries import snap_to_nearest_node
+        origin_node = await snap_to_nearest_node(
+            request.origin.lat, request.origin.lon
+        )
+        dest_node = await snap_to_nearest_node(
+            request.destination.lat, request.destination.lon
+        )
+        if not origin_node:
+            raise HTTPException(
+                status_code=422,
+                detail="No road found within 500m of the origin point. "
+                       "Try clicking on or near a road.",
+            )
+        if not dest_node:
+            raise HTTPException(
+                status_code=422,
+                detail="No road found within 500m of the destination point. "
+                       "Try clicking on or near a road.",
+            )
         raise HTTPException(
             status_code=404,
-            detail="No route found between the given points. "
-                   "Ensure both points are within Bangalore's road network.",
+            detail="No route found between these two points. "
+                   "The locations may be disconnected in the road network.",
         )
 
     return route

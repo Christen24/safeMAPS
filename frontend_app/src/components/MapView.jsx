@@ -439,7 +439,7 @@ export default function MapView({
                     ⚠ Blackspots
                 </button>
                 <button
-                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''} ${loadingIncidents ? 'loading' : ''}`}
+                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''}`}
                     onClick={() => setShowIncidents(!showIncidents)}
                 >
                     ▲ Live Incidents

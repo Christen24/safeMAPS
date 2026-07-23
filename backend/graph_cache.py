@@ -65,6 +65,10 @@ class GraphCache:
     def __init__(self):
         self.nodes: dict[int, tuple[float, float]] = {}
         self.adjacency: dict[int, list[tuple]] = {}
+        # Fix R2: reverse adjacency cached once at load time.
+        # Previously built inside bidirectional_astar() on every call —
+        # iterating ~500k edges × 4 concurrent profiles per /compare request.
+        self.rev_adjacency: dict[int, list[tuple]] = {}
         self.edge_data: dict[int, dict] = {}
         self.edge_aqi: dict[int, float] = {}
         self.edge_risk: dict[int, float] = {}
@@ -188,9 +192,24 @@ class GraphCache:
             f"{sum(len(v) for v in adjacency.values()):,} adjacency entries"
         )
 
+        # Fix R2: build reverse adjacency while edge data is in local vars
+        # (before committing to self) so there's no window where
+        # self.adjacency exists but self.rev_adjacency doesn't.
+        rev_adjacency: dict[int, list[tuple]] = {}
+        for src_node, neighbours in adjacency.items():
+            for nbr, eid, length_m, speed_kmh in neighbours:
+                rev_adjacency.setdefault(nbr, []).append(
+                    (src_node, eid, length_m, speed_kmh)
+                )
+        logger.info(
+            f"Reverse adjacency built: "
+            f"{sum(len(v) for v in rev_adjacency.values()):,} entries."
+        )
+
         # Commit atomically so routing never sees a half-loaded state
         self.nodes = nodes
         self.adjacency = adjacency
+        self.rev_adjacency = rev_adjacency
         self.edge_data = edge_data
         self._loaded_at = time.monotonic()
 
@@ -426,9 +445,24 @@ class GraphCache:
                 for nbr, eid, length_m, old_spd in self.adjacency[node_id]
             ]
 
+        # Fix R2: keep rev_adjacency in sync with updated speeds
+        rev_nodes_to_rebuild: set[int] = set()
+        for node_id, rev_neighbours in self.rev_adjacency.items():
+            for src, eid, _len, _spd in rev_neighbours:
+                if eid in affected_eids:
+                    rev_nodes_to_rebuild.add(node_id)
+                    break
+
+        for node_id in rev_nodes_to_rebuild:
+            self.rev_adjacency[node_id] = [
+                (src, eid, length_m, edge_speeds.get(eid, old_spd))
+                for src, eid, length_m, old_spd in self.rev_adjacency[node_id]
+            ]
+
         logger.info(
             f"[cache] Speed patch: {patched_count} edges, "
-            f"{len(nodes_to_rebuild)} adjacency nodes rebuilt."
+            f"{len(nodes_to_rebuild)} fwd + {len(rev_nodes_to_rebuild)} rev "
+            f"adjacency nodes rebuilt."
         )
 
     # ── Accessors ─────────────────────────────────────────────────────

@@ -218,6 +218,7 @@ async def find_route(
     # ── Build response ────────────────────────────────────────────────
     segments: list[SegmentInfo] = []
     all_coords: list = []
+    _first_edge = True  # Fix R3: track first edge to avoid duplicate join coords
     total_time = 0.0
     total_distance = 0.0
     total_aqi_weighted = 0.0
@@ -247,7 +248,18 @@ async def find_route(
 
         geom = ed.get("geometry", {"type": "LineString", "coordinates": []})
         if "coordinates" in geom:
-            all_coords.extend(geom["coordinates"])
+            coords = geom["coordinates"]
+            if coords:
+                if _first_edge:
+                    # Fix R3: include all coords for the first edge
+                    all_coords.extend(coords)
+                    _first_edge = False
+                else:
+                    # Fix R3: skip first coord of subsequent edges — it is the
+                    # same geographic point as the last coord of the previous edge
+                    # (shared road node). Without this, every junction appears
+                    # twice in the geometry, causing polyline kinks on the map.
+                    all_coords.extend(coords[1:])
 
         segments.append(SegmentInfo(
             edge_id=eid,

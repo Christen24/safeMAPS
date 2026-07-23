@@ -91,7 +91,12 @@ def bidirectional_astar(
     start_lat, start_lon = nodes[start_id]
 
     # Build reverse graph (expensive first call, but still O(E))
-    rev_adjacency = _build_reverse_adjacency(adjacency)
+    # Fix R2: use pre-built reverse adjacency from graph_cache.
+    # _build_reverse_adjacency() iterated all ~500k edges on every route
+    # call — called 4× concurrently per /compare request. Now built once
+    # at startup in graph_cache.load() and reused here.
+    from graph_cache import graph_cache as _gc
+    rev_adjacency = _gc.rev_adjacency if _gc.rev_adjacency else _build_reverse_adjacency(adjacency)
 
     # ── Forward search state ─────────────────────────────────────────
     g_f: dict[int, float] = {start_id: 0.0}

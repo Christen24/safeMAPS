@@ -13,19 +13,34 @@ const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 
 async function geocode(query) {
     if (!query || query.length < 3) return [];
+    // Fix S1: detect raw lat/lon — return directly without hitting Nominatim
+    const coordMatch = query.trim().match(/^(-?\d{1,3}\.?\d*)[,\s]+(-?\d{1,3}\.?\d*)$/);
+    if (coordMatch) {
+        const lat = coordMatch[1], lon = coordMatch[2];
+        return [{ lat, lon, display_name: lat + ', ' + lon, road: null, suburb: null, city: 'Bangalore' }];
+    }
     try {
-        const resp = await fetch(
-            `${NOMINATIM}?q=${encodeURIComponent(query + ', Bangalore')}&format=json&limit=6&addressdetails=1`,
-            { headers: { 'Accept-Language': 'en' } }
-        );
+        // Fix S1: viewbox bias instead of appending ", Bangalore" to query.
+        // Appending city corrupts Nominatim's parser for specific addresses.
+        const params = new URLSearchParams({
+            q: query,
+            format: 'json',
+            limit: 6,
+            addressdetails: 1,
+            viewbox: '77.45,12.85,77.78,13.15',
+            bounded: 0,
+            countrycodes: 'in',
+        });
+        const resp = await fetch(NOMINATIM + '?' + params, {
+            headers: { 'Accept-Language': 'en' },
+        });
         if (!resp.ok) return [];
         const results = await resp.json();
         return results.map(({ lat, lon, display_name, address }) => ({
             lat, lon, display_name,
-            // Prefer address parts for smarter formatting
-            road:         address?.road || address?.pedestrian || address?.footway,
-            suburb:       address?.suburb || address?.neighbourhood,
-            city:         address?.city || address?.town || 'Bangalore',
+            road:   address?.road || address?.pedestrian || address?.footway,
+            suburb: address?.suburb || address?.neighbourhood,
+            city:   address?.city  || address?.town || 'Bangalore',
         }));
     } catch { return []; }
 }
@@ -100,7 +115,7 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
         if (value.lat && value.lon) {
             if (coordKey !== prevCoordRef.current) {
                 prevCoordRef.current = coordKey;
-                setDisplayName(d => d ? d : `${(+value.lat).toFixed(4)}, ${(+value.lon).toFixed(4)}`);
+                setDisplayName((+value.lat).toFixed(4) + ', ' + (+value.lon).toFixed(4));
             }
         } else {
             prevCoordRef.current = '';

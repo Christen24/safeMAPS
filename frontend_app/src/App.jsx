@@ -141,8 +141,9 @@ export default function App() {
             origin.lat && destination.lat && !autoComputeRan.current) {
             autoComputeRan.current = true;
             pendingAutoCompute.current = false;
-            // small delay so map renders first
-            setTimeout(() => computeRoute(), 200);
+            // Fix S2: use computeRouteWithCoords with current state values
+            // captured right now — avoids stale closure race condition
+            computeRouteWithCoords(origin, destination, profile);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [view, origin.lat, destination.lat]);
@@ -288,24 +289,24 @@ export default function App() {
         } catch (err) { console.warn('Trip record failed:', err.message); }
     }, [origin, destination]);
 
-    const computeRoute = useCallback(async () => {
-        if (!origin.lat || !origin.lon || !destination.lat || !destination.lon) {
-            setError('Enter valid coordinates for both points.');
-            return;
-        }
+    // Fix S2: core fetch logic extracted so it can be called with explicit coords.
+    // computeRoute() reads from state (user clicking Compute button).
+    // computeRouteWithCoords(org, dst, prof) is called by handleLoadCommute and
+    // URL auto-compute where state updates haven't propagated yet.
+    const _fetchRoute = useCallback(async (org, dst, prof, wts, depTime, custom) => {
         setLoading(true); setError(null);
         try {
             let chosen = null;
-            if (isCustomWeight()) {
+            if (custom) {
                 const body = {
-                    origin: { lat: +origin.lat, lon: +origin.lon },
-                    destination: { lat: +destination.lat, lon: +destination.lon },
-                    profile,
-                    alpha: weights.alpha, beta: weights.beta, gamma: weights.gamma,
+                    origin: { lat: +org.lat, lon: +org.lon },
+                    destination: { lat: +dst.lat, lon: +dst.lon },
+                    profile: prof,
+                    alpha: wts.alpha, beta: wts.beta, gamma: wts.gamma,
                     use_custom_weights: true,
                 };
-                if (departureTime) body.departure_time = departureTime;
-                const resp = await fetch(`${API_BASE}/route`, {
+                if (depTime) body.departure_time = depTime;
+                const resp = await fetch(API_BASE + '/route', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -315,29 +316,44 @@ export default function App() {
                 setRoutes([route]); setSelectedRoute(route); chosen = route;
             } else {
                 const params = new URLSearchParams({
-                    origin_lat: origin.lat, origin_lon: origin.lon,
-                    dest_lat: destination.lat, dest_lon: destination.lon,
+                    origin_lat: org.lat, origin_lon: org.lon,
+                    dest_lat:   dst.lat, dest_lon:   dst.lon,
                 });
-                if (departureTime) params.set('departure_time', departureTime);
-                const resp = await fetch(`${API_BASE}/route/compare?${params}`);
+                if (depTime) params.set('departure_time', depTime);
+                const resp = await fetch(API_BASE + '/route/compare?' + params);
                 if (!resp.ok) throw new Error((await resp.json()).detail || 'Route failed');
                 const data = await resp.json();
                 setRoutes(data.routes);
-                const sel = data.routes.find(r => r.profile === profile) || data.routes[0];
+                const sel = data.routes.find(r => r.profile === prof) || data.routes[0];
                 setSelectedRoute(sel); chosen = sel;
             }
             if (chosen) {
                 recordTrip(chosen);
-                // Encode route to URL for sharing/bookmarking
-                encodeRouteToURL(origin, destination, profile, departureTime);
+                encodeRouteToURL(org, dst, prof, depTime);
             }
         } catch (err) {
             setError(err.message || 'Route computation failed');
             const mocks = getMockRoutes();
             setRoutes(mocks);
-            setSelectedRoute(mocks.find(r => r.profile === profile) || mocks[0]);
+            setSelectedRoute(mocks.find(r => r.profile === prof) || mocks[0]);
         } finally { setLoading(false); }
-    }, [origin, destination, profile, weights, departureTime, isCustomWeight, recordTrip]);
+    }, [recordTrip]);
+
+    const computeRoute = useCallback(async () => {
+        if (!origin.lat || !origin.lon || !destination.lat || !destination.lon) {
+            setError('Enter valid coordinates for both points.');
+            return;
+        }
+        await _fetchRoute(origin, destination, profile, weights, departureTime, isCustomWeight());
+    }, [origin, destination, profile, weights, departureTime, isCustomWeight, _fetchRoute]);
+
+    // Fix S2: called by saved commutes / URL auto-compute with explicit coords
+    // so we don't rely on React state having propagated yet.
+    const computeRouteWithCoords = useCallback(async (org, dst, prof) => {
+        if (!org.lat || !dst.lat) return;
+        const preset = PRESET_WEIGHTS[prof] || weights;
+        await _fetchRoute(org, dst, prof, preset, departureTime, false);
+    }, [weights, departureTime, _fetchRoute]);
 
     // Stable callback — reads origin/destination via refs to avoid
     // giving useMapEvents a new function ref on every click (React #310).
@@ -362,13 +378,15 @@ export default function App() {
 
     // ── Load a saved commute (one-tap re-route) ────────────────────
     const handleLoadCommute = useCallback((comOrigin, comDest, comProfile) => {
+        // Fix S2: set state for display, but call computeRouteWithCoords
+        // with explicit coords — avoids the race where computeRoute()
+        // closes over old origin/destination before state propagates.
         setOrigin(comOrigin);
         setDestination(comDest);
         handleProfileChange(comProfile);
         setRoutes([]); setSelectedRoute(null); setError(null);
-        setTimeout(() => computeRoute(), 200);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [handleProfileChange]);
+        computeRouteWithCoords(comOrigin, comDest, comProfile);
+    }, [handleProfileChange, computeRouteWithCoords]);
 
     if (view === 'landing') {
         return <LandingPage onStart={() => setView('dashboard')} />;

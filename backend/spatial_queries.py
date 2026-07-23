@@ -10,8 +10,20 @@ import json
 from database import db
 
 
-async def snap_to_nearest_node(lat: float, lon: float) -> dict | None:
-    """Find the nearest road network node to a lat/lon coordinate."""
+async def snap_to_nearest_node(
+    lat: float,
+    lon: float,
+    max_distance_m: float = 500.0,
+) -> dict | None:
+    """
+    Find the nearest road network node to a lat/lon coordinate.
+
+    Fix R1: added max_distance_m guard (default 500m).
+    Without this, clicking outside the road network (e.g. a park, airport,
+    or river) silently returns a node several km away, producing routes
+    that start/end at the wrong location with no user feedback.
+    Returns None if no node is found within max_distance_m.
+    """
     query = """
         SELECT
             id,
@@ -22,10 +34,15 @@ async def snap_to_nearest_node(lat: float, lon: float) -> dict | None:
                 ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
             ) AS distance_m
         FROM road_nodes
+        WHERE ST_DWithin(
+            geom::geography,
+            ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+            $3
+        )
         ORDER BY geom <-> ST_SetSRID(ST_MakePoint($2, $1), 4326)
         LIMIT 1;
     """
-    row = await db.fetchrow(query, lat, lon)
+    row = await db.fetchrow(query, lat, lon, max_distance_m)
     return dict(row) if row else None
 
 
