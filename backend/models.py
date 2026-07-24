@@ -116,3 +116,28 @@ class AccidentBlackspot(BaseModel):
     id: int
     lat: float
     lon: float
+
+
+# ─── Live Incident Models ─────────────────────────────────────────────
+
+class LiveIncident(BaseModel):
+    """A single active live incident from OSM, Waze, or Twitter."""
+    id:            int
+    source:        str                    # osm / waze / twitter
+    incident_type: str                    # accident / closure / waterlogging / construction / hazard
+    lat:           float
+    lon:           float
+    severity:      int                    # 1 = low, 2 = medium, 3 = high
+    description:   Optional[str] = None
+    reported_at:   str
+    expires_at:    str
+
+
+class IncidentLayerResponse(BaseModel):
+    """Response for the /api/incidents/active endpoint."""
+    type:       str = "FeatureCollection"
+    features:   list[dict]               # GeoJSON Feature per incident
+    total:      int
+    as_of:      str                      # ISO timestamp of the query
+    cache_age_seconds: float             # age of edge_incident cache in graph
+
