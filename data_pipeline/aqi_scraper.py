@@ -290,14 +290,9 @@ async def scrape_once() -> None:
 
     from cpcb_scraper import fetch_cpcb_stations, merge_cpcb_waqi
 
-    waqi_task = (
-        fetch_stations_in_bbox(token)
-        if token else asyncio.coroutine(lambda: [])()
-    )
-    cpcb_task = (
-        fetch_cpcb_stations(cpcb_key)
-        if cpcb_key else asyncio.coroutine(lambda: [])()
-    )
+    async def _empty():
+        return []
+
     waqi_stations, cpcb_stations = await asyncio.gather(
         fetch_stations_in_bbox(token) if token else _empty(),
         fetch_cpcb_stations(cpcb_key) if cpcb_key else _empty(),
@@ -452,7 +447,12 @@ async def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="Scrape AQI data for Bangalore")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
+    parser.add_argument("--mock", action="store_true", help="Seed mock AQI data and exit")
     args = parser.parse_args()
+
+    if args.mock:
+        await seed_mock_aqi()
+        return
 
     if args.once:
         await scrape_once()
