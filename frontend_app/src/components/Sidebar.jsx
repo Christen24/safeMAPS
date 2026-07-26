@@ -9,31 +9,97 @@ const PROFILES = [
     { id: 'balanced',   label: 'Balanced',   sub: 'Weighted',       icon: '⚖️', color: 'var(--violet)' },
 ];
 
-const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+// ── Geocoding ─────────────────────────────────────────────────
+// PRIMARY: Photon (by Komoot) — indexes the full OSM planet.
+// Returns shops, malls, apartments, informal names, streets that
+// Nominatim's public instance misses for Indian locations.
+// FALLBACK: Nominatim with viewbox bias (no city append — that
+// corrupts the parser for addresses already containing locality).
+const PHOTON    = 'https://photon.komoot.io/api/';
+const NOMINATIM = 'https://nominatim.openstreetmap.org';
+
+// Bangalore center + generous bounding box for India filter
+const BLR_LAT = 12.9716, BLR_LON = 77.5946;
+const INDIA_BBOX = { minLon: 68, maxLon: 98, minLat: 6, maxLat: 38 };
+
+function inIndia(lon, lat) {
+    return lon > INDIA_BBOX.minLon && lon < INDIA_BBOX.maxLon &&
+           lat > INDIA_BBOX.minLat && lat < INDIA_BBOX.maxLat;
+}
+
+function photonToResult(f) {
+    const p   = f.properties;
+    const lon = f.geometry.coordinates[0];
+    const lat = f.geometry.coordinates[1];
+    // Build display_name from Photon's structured fields so it's clean
+    const parts = [
+        p.name,
+        p.housenumber && p.street ? p.street + ' ' + p.housenumber : p.street,
+        p.district || p.suburb || p.locality || p.neighbourhood,
+        p.city || p.town || p.village,
+        p.state,
+    ].filter(Boolean);
+    return {
+        lat:          String(lat),
+        lon:          String(lon),
+        display_name: parts.join(', '),
+        road:         p.street || p.name,
+        suburb:       p.district || p.suburb || p.locality || p.neighbourhood,
+        city:         p.city || p.town || p.village || 'Bangalore',
+        type:         p.type || p.osm_value || '',
+    };
+}
 
 async function geocode(query) {
-    if (!query || query.length < 3) return [];
-    // Fix S1: detect raw lat/lon — return directly without hitting Nominatim
+    if (!query || query.length < 2) return [];
+
+    // Raw coordinates — return immediately, no API call needed
     const coordMatch = query.trim().match(/^(-?\d{1,3}\.?\d*)[,\s]+(-?\d{1,3}\.?\d*)$/);
     if (coordMatch) {
         const lat = coordMatch[1], lon = coordMatch[2];
-        return [{ lat, lon, display_name: lat + ', ' + lon, road: null, suburb: null, city: 'Bangalore' }];
+        return [{ lat, lon, display_name: lat + ', ' + lon,
+                  road: null, suburb: null, city: 'Bangalore' }];
     }
+
+    // ── 1. Photon (primary) ──────────────────────────────────────────
     try {
-        // Fix S1: viewbox bias instead of appending ", Bangalore" to query.
-        // Appending city corrupts Nominatim's parser for specific addresses.
         const params = new URLSearchParams({
-            q: query,
-            format: 'json',
-            limit: 6,
+            q:     query,
+            limit: 8,
+            lang:  'en',
+            lat:   BLR_LAT,   // location bias — not a hard filter
+            lon:   BLR_LON,
+        });
+        const resp = await fetch(PHOTON + '?' + params,
+            { headers: { 'Accept-Language': 'en' } });
+        if (resp.ok) {
+            const data     = await resp.json();
+            const features = (data.features || []).filter(f => {
+                const [lon, lat] = f.geometry.coordinates;
+                const cc = f.properties.country_code;
+                return cc === 'in' || cc === 'IN' ||
+                       f.properties.country === 'India' ||
+                       inIndia(lon, lat);
+            });
+            if (features.length > 0)
+                return features.map(photonToResult);
+        }
+    } catch { /* fall through to Nominatim */ }
+
+    // ── 2. Nominatim (fallback) ──────────────────────────────────────
+    try {
+        const params = new URLSearchParams({
+            q:            query,
+            format:       'json',
+            limit:        8,
             addressdetails: 1,
-            viewbox: '77.45,12.85,77.78,13.15',
-            bounded: 0,
+            // viewbox bias — does NOT corrupt the query string
+            viewbox:      '77.35,12.75,77.88,13.25',
+            bounded:      0,
             countrycodes: 'in',
         });
-        const resp = await fetch(NOMINATIM + '?' + params, {
-            headers: { 'Accept-Language': 'en' },
-        });
+        const resp = await fetch(NOMINATIM + '/search?' + params,
+            { headers: { 'Accept-Language': 'en' } });
         if (!resp.ok) return [];
         const results = await resp.json();
         return results.map(({ lat, lon, display_name, address }) => ({
@@ -45,9 +111,21 @@ async function geocode(query) {
     } catch { return []; }
 }
 
-function reverseGeocode(lat, lon) {
+async function reverseGeocode(lat, lon) {
+    // Try Photon reverse first — cleaner structured response
+    try {
+        const resp = await fetch(
+            `https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&lang=en`,
+            { headers: { 'Accept-Language': 'en' } });
+        if (resp.ok) {
+            const data = await resp.json();
+            const f    = data.features?.[0];
+            if (f) return photonToResult(f);
+        }
+    } catch { /* fall through */ }
+    // Nominatim fallback
     return fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=en`,
+        `${NOMINATIM}/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=en`,
         { headers: { 'Accept-Language': 'en' } }
     ).then(r => r.ok ? r.json() : null).catch(() => null);
 }
@@ -86,7 +164,7 @@ function formatSuggestion(display_name, addressParts = {}) {
     };
 }
 
-const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indicator }) {
+const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indicator, allowLocate = true }) {
     const [query, setQuery]               = useState('');
     const [suggestions, setSuggestions]   = useState([]);
     const [recents, setRecents]           = useState(loadRecents);
@@ -243,12 +321,14 @@ const PlaceInput = memo(function PlaceInput({ placeholder, value, onSelect, indi
                 {showClear && !searching && (
                     <button className="input-clear-btn" onClick={handleClear} title="Clear" tabIndex={-1}>×</button>
                 )}
-                <button
-                    className={`input-locate-btn ${locating ? 'locating' : ''}`}
-                    onClick={handleGeolocate}
-                    title="Use my location"
-                    tabIndex={-1}
-                >📍</button>
+                {allowLocate && (
+                    <button
+                        className={`input-locate-btn ${locating ? 'locating' : ''}`}
+                        onClick={handleGeolocate}
+                        title="Use my location"
+                        tabIndex={-1}
+                    >📍</button>
+                )}
             </div>
 
             {showSuggestions && allItems.length > 0 && (
@@ -291,8 +371,11 @@ export default function Sidebar({
     departureTime, setDepartureTime,
     routes, selectedRoute, setSelectedRoute,
     onCompute, onSwap, loading, error,
+    locatingUser, onUseCurrentLocation,
     onShare, shareCopied,
     onLoadCommute,
+    pickingDestOnMap,   // true when user is in map-pick mode for destination
+    onTogglePickDest,   // toggles the pick mode
 }) {
     const canCompute = origin.lat && origin.lon && destination.lat && destination.lon && !loading;
     const [segmentsExpanded, setSegmentsExpanded] = useState(false);
@@ -333,7 +416,19 @@ export default function Sidebar({
                     value={origin}
                     onSelect={setOrigin}
                     indicator="origin"
+                    allowLocate={false}
                 />
+
+                <button
+                    type="button"
+                    className={`live-location-btn ${locatingUser ? 'locating' : ''}`}
+                    onClick={onUseCurrentLocation}
+                    disabled={locatingUser || loading}
+                    title="Use live location as origin"
+                >
+                    <span className="live-location-icon">📍</span>
+                    <span>{locatingUser ? 'Fetching live location...' : 'Use live location as origin'}</span>
+                </button>
 
                 <div className="input-connector">
                     <div className="connector-line" />
@@ -346,7 +441,24 @@ export default function Sidebar({
                     value={destination}
                     onSelect={setDestination}
                     indicator="dest"
+                    allowLocate={false}
                 />
+
+                {/* Select destination on map */}
+                <button
+                    type="button"
+                    className={`select-on-map-btn${pickingDestOnMap ? ' active' : ''}`}
+                    onClick={onTogglePickDest}
+                    title="Click anywhere on the map to set destination"
+                >
+                    <span className="select-on-map-icon">🗺</span>
+                    <span>
+                        {pickingDestOnMap
+                            ? 'Click map to pin destination…'
+                            : 'Select destination on map'}
+                    </span>
+                    {pickingDestOnMap && <span className="select-on-map-cancel">✕ Cancel</span>}
+                </button>
 
                 {/* Departure time */}
                 <div className="departure-row" style={{ marginTop: 8 }}>
@@ -359,7 +471,7 @@ export default function Sidebar({
                     />
                 </div>
 
-                <p className="hint">Tap map to pin · or search by place name</p>
+                <p className="hint">Search above · tap map to pin origin · or use "Select on map" for destination</p>
             </div>
 
             {/* ── Profile ── */}
