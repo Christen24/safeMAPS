@@ -2570,6 +2570,44 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 .input-locate-btn.locating {
   animation: locating-pulse 0.8s ease-in-out infinite alternate;
 }
+
+.live-location-btn {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 4px;
+  padding: 7px 10px;
+  background: rgba(0, 255, 136, 0.08);
+  border: 1px solid rgba(0, 255, 136, 0.22);
+  border-radius: var(--r-sm);
+  color: var(--acid);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: var(--ease-snap);
+}
+
+.live-location-btn:hover:not(:disabled) {
+  background: rgba(0, 255, 136, 0.14);
+  border-color: var(--border-hi);
+  box-shadow: 0 0 0 2px var(--acid-mute);
+}
+
+.live-location-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.live-location-btn.locating .live-location-icon {
+  animation: locating-pulse 0.8s ease-in-out infinite alternate;
+}
+
 @keyframes locating-pulse {
   from { opacity: 0.3; transform: scale(0.9); }
   to   { opacity: 1;   transform: scale(1.1); }
@@ -2657,4 +2695,102 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Select destination on map — button + crosshair + overlay
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Button in sidebar */
+.select-on-map-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 10px;
+    margin-top: 4px;
+    background: transparent;
+    border: 1px dashed var(--border-med);
+    border-radius: var(--r-sm);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: var(--ease-snap);
+    text-align: left;
+}
+
+.select-on-map-btn:hover {
+    background: var(--surface-2);
+    border-color: var(--border-hi);
+    color: var(--acid);
+}
+
+.select-on-map-btn.active {
+    background: var(--acid-mute);
+    border-color: var(--acid);
+    border-style: solid;
+    color: var(--acid);
+    animation: pulse-border 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+    0%, 100% { border-color: var(--acid); box-shadow: 0 0 0 0 var(--acid-mute); }
+    50%       { border-color: var(--acid-dim); box-shadow: 0 0 0 4px transparent; }
+}
+
+.select-on-map-icon { font-size: 0.85rem; flex-shrink: 0; }
+
+.select-on-map-cancel {
+    margin-left: auto;
+    font-size: 0.6rem;
+    opacity: 0.6;
+    padding: 1px 5px;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+}
+
+/* Map container: crosshair cursor when picking */
+.map-container.picking-dest .leaflet-container {
+    cursor: crosshair !important;
+}
+
+.map-container.picking-dest .leaflet-grab {
+    cursor: crosshair !important;
+}
+
+/* Overlay hint at top of map */
+.pick-dest-overlay {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1200;
+    background: var(--surface-3);
+    border: 1px solid var(--acid);
+    border-radius: var(--r-sm);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--acid);
+    pointer-events: none;
+    backdrop-filter: blur(var(--glass-blur));
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4), 0 0 12px var(--acid-mute);
+    white-space: nowrap;
+    animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.pick-dest-overlay-icon {
+    font-size: 1rem;
 }
