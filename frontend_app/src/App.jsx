@@ -104,20 +104,25 @@ export default function App() {
     const [showIncidents, setShowIncidents]   = useState(true);
     const [aqiData, setAqiData]               = useState(null);
     const [loadingAQI, setLoadingAQI]         = useState(false);
+    const [locatingUser, setLocatingUser]     = useState(false);
+    const [pickingDestOnMap, setPickingDestOnMap] = useState(false);
     const [blackspotData, setBlackspotData]   = useState(null);
     const [mapBounds, setMapBounds]           = useState(null);
     const [isOffline, setIsOffline]           = useState(false);
     // ── Stable refs so callbacks don't recreate on every state change ─
-    const showAQIRef    = useRef(showAQI);
-    const fetchAQIRef   = useRef(null);
-    const originRef     = useRef(origin);
-    const destinationRef = useRef(destination);
+    const showAQIRef         = useRef(showAQI);
+    const fetchAQIRef        = useRef(null);
+    const originRef          = useRef(origin);
+    const destinationRef     = useRef(destination);
+    const pickingDestOnMapRef = useRef(pickingDestOnMap);
     useEffect(() => { showAQIRef.current = showAQI; }, [showAQI]);
     useEffect(() => { originRef.current = origin; }, [origin]);
     useEffect(() => { destinationRef.current = destination; }, [destination]);
+    useEffect(() => { pickingDestOnMapRef.current = pickingDestOnMap; }, [pickingDestOnMap]);
     const [bannerDismissed, setBannerDismissed] = useState(false);
     const [shareCopied, setShareCopied]       = useState(false);
-    const [incidents, setIncidents]           = useState([]);
+    const [incidents, setIncidents]           = useState(null);
+    const [loadingIncidents, setLoadingIncidents] = useState(false);
     const pendingAutoCompute                  = useRef(false);
 
     // ── Decode URL params on mount → auto-fill + auto-compute ─────────
@@ -183,6 +188,7 @@ export default function App() {
     useEffect(() => {
         let cancelled = false;
         const fetchIncidents = async () => {
+            if (!cancelled) setLoadingIncidents(true);
             try {
                 const resp = await fetch(`${API_BASE}/incidents/active?limit=300`);
                 if (resp.ok) {
@@ -190,6 +196,9 @@ export default function App() {
                     if (!cancelled) setIncidents(data);
                 }
             } catch (err) { console.warn('Incidents fetch failed:', err.message); }
+            finally {
+                if (!cancelled) setLoadingIncidents(false);
+            }
         };
         fetchIncidents();
         const id = setInterval(fetchIncidents, 10 * 60 * 1000);
@@ -355,9 +364,57 @@ export default function App() {
         await _fetchRoute(org, dst, prof, preset, departureTime, false);
     }, [weights, departureTime, _fetchRoute]);
 
+    const handleUseCurrentLocation = useCallback(() => {
+        if (!navigator.geolocation) {
+            setError('Live location is not supported by this browser.');
+            return;
+        }
+
+        setLocatingUser(true);
+        setError(null);
+        navigator.geolocation.getCurrentPosition(
+            async (pos) => {
+                const nextOrigin = {
+                    lat: pos.coords.latitude.toFixed(6),
+                    lon: pos.coords.longitude.toFixed(6),
+                };
+                setOrigin(nextOrigin);
+                setLocatingUser(false);
+
+                if (destinationRef.current.lat && destinationRef.current.lon) {
+                    await computeRouteWithCoords(nextOrigin, destinationRef.current, profile);
+                }
+            },
+            (geoError) => {
+                setLocatingUser(false);
+                const message = geoError.code === geoError.PERMISSION_DENIED
+                    ? 'Location permission was denied. Allow location access and try again.'
+                    : 'Could not fetch your live location. Check GPS or browser permissions.';
+                setError(message);
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 30000,
+            }
+        );
+    }, [computeRouteWithCoords, profile]);
+
+    // ── Toggle "select destination on map" mode ────────────────────
+    const handleTogglePickDest = useCallback(() => {
+        setPickingDestOnMap(v => !v);
+    }, []);
+
     // Stable callback — reads origin/destination via refs to avoid
     // giving useMapEvents a new function ref on every click (React #310).
     const handleMapClick = useCallback((latlng) => {
+        // "Select destination on map" mode: any click sets the destination
+        if (pickingDestOnMapRef.current) {
+            setDestination({ lat: latlng.lat.toFixed(6), lon: latlng.lng.toFixed(6) });
+            setPickingDestOnMap(false);   // exit pick mode after selection
+            return;
+        }
+        // Normal mode: first click = origin, second = destination, third = reset
         const o = originRef.current;
         const d = destinationRef.current;
         if (!o.lat) {
@@ -400,7 +457,7 @@ export default function App() {
                 {showBanner && (
                     <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
                 )}
-                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.length ?? 0} />
+                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.total ?? incidents?.features?.length ?? 0} />
                 <div className="main-content gs-page" style={{ marginTop: 0 }}>
                     <GreenScore />
                 </div>
@@ -414,7 +471,7 @@ export default function App() {
             {showBanner && (
                 <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
             )}
-            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.length ?? 0} />
+            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.total ?? incidents?.features?.length ?? 0} />
             <div className="main-content">
                 <Sidebar
                     origin={origin} destination={destination}
@@ -426,8 +483,12 @@ export default function App() {
                     setSelectedRoute={setSelectedRoute}
                     onCompute={computeRoute} onSwap={swapPoints}
                     loading={loading} error={error}
+                    locatingUser={locatingUser}
+                    onUseCurrentLocation={handleUseCurrentLocation}
                     onShare={handleShare} shareCopied={shareCopied}
                     onLoadCommute={handleLoadCommute}
+                    pickingDestOnMap={pickingDestOnMap}
+                    onTogglePickDest={handleTogglePickDest}
                 />
                 <MapView
                     origin={origin} destination={destination}
@@ -438,8 +499,10 @@ export default function App() {
                     aqiData={aqiData} blackspotData={blackspotData}
                     loadingAQI={loadingAQI}
                     incidentData={incidents}
+                    loadingIncidents={loadingIncidents}
                     loading={loading} onMapClick={handleMapClick}
                     onBoundsChange={handleBoundsChange}
+                    pickingDestOnMap={pickingDestOnMap}
                 />
             </div>
         </div>
