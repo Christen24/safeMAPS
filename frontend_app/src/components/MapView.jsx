@@ -1,51 +1,12 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import {
     MapContainer, TileLayer, Polyline, Marker,
     Popup, CircleMarker, useMapEvents, useMap,
 } from 'react-leaflet';
 
-// ── Bug 2 fix: zoom-aware AQI circle radius ───────────────────
-// At zoom 12 (city view) radius ~11px covers a 100m grid cell.
-// Without this all cells render at radius=5 → gaps between circles
-// → the "scattered" heatmap appearance.
-function aqiRadius(zoom) {
-    // Formula: 0.7 × 2^(zoom-11), clamped 4–32
-    return Math.max(4, Math.min(32, Math.round(0.7 * Math.pow(2, zoom - 11))));
-}
+import AQIHeatmapLayer from './AQIHeatmapLayer';
 
-// Hook: tracks current Leaflet map zoom level reactively
-function useMapZoom() {
-    const map = useMap();
-    const [zoom, setZoom] = useState(map.getZoom());
-    useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
-    return zoom;
-}
-
-// AQI heatmap layer extracted so it can read zoom via hook
-function AQILayer({ aqiData }) {
-    const zoom = useMapZoom();
-    const r = aqiRadius(zoom);
-    if (!aqiData?.features) return null;
-    return (
-        <>
-            {aqiData.features.map((f, i) => (
-                <CircleMarker
-                    // Bug 6 fix: stable key from cell_id prevents full re-render on pan
-                    key={`aqi-${f.properties.cell_id ?? i}`}
-                    center={[f.properties.center_lat, f.properties.center_lon]}
-                    radius={r}
-                    pathOptions={{
-                        // Bug 7 fix: thin matching stroke makes circles legible on satellite
-                        color:       aqiColor(f.properties.aqi),
-                        weight:      0.5,
-                        fillColor:   aqiColor(f.properties.aqi),
-                        fillOpacity: 0.55,   // was 0.28 — too faint on ArcGIS satellite tile
-                    }}
-                />
-            ))}
-        </>
-    );
-}
+// (AQILayer + useMapZoom removed — replaced by canvas-based AQIHeatmapLayer)
 import L from 'leaflet';
 
 // ── Fix default Leaflet icon paths ────────────────────────────
@@ -160,20 +121,26 @@ function buildColoredSegments(segments) {
 // ── Debounced map events ──────────────────────────────────────
 function MapEvents({ onMapClick, onBoundsChange }) {
     const debounceRef = useRef(null);
+    const emitBounds = useCallback((mapInstance) => {
+        const b = mapInstance.getBounds();
+        onBoundsChange({
+            north: b.getNorth(), south: b.getSouth(),
+            east:  b.getEast(),  west:  b.getWest(),
+        });
+    }, [onBoundsChange]);
 
     const map = useMapEvents({
         click(e) { onMapClick(e.latlng); },
         moveend() {
             if (debounceRef.current) clearTimeout(debounceRef.current);
-            debounceRef.current = setTimeout(() => {
-                const b = map.getBounds();
-                onBoundsChange({
-                    north: b.getNorth(), south: b.getSouth(),
-                    east:  b.getEast(),  west:  b.getWest(),
-                });
-            }, 500);
+            debounceRef.current = setTimeout(() => emitBounds(map), 500);
         },
     });
+
+    useEffect(() => {
+        emitBounds(map);
+    }, [emitBounds, map]);
+
     return null;
 }
 
@@ -251,13 +218,22 @@ export default function MapView({
     showIncidents, setShowIncidents,
     aqiData, blackspotData, loadingAQI,
     incidentData,           // Bug 3 fix: received from App.jsx, not fetched here
+    loadingIncidents,
     loading, onMapClick, onBoundsChange,
+    pickingDestOnMap,       // when true: crosshair cursor + overlay hint
 }) {
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
 
     return (
-        <div className="map-container">
+        <div className={`map-container${pickingDestOnMap ? ' picking-dest' : ''}`}>
+            {/* Overlay hint when in pick-destination mode */}
+            {pickingDestOnMap && (
+                <div className="pick-dest-overlay">
+                    <span className="pick-dest-overlay-icon">🗺</span>
+                    Click anywhere on the map to set your destination
+                </div>
+            )}
             <MapContainer
                 center={[12.9716, 77.5946]}
                 zoom={12}
@@ -335,7 +311,7 @@ export default function MapView({
                 {selectedRoute && <SelectedRoute route={selectedRoute} />}
 
                 {/* AQI heatmap — zoom-aware radius, stable keys, satellite contrast */}
-                {showAQI && <AQILayer aqiData={aqiData} />}
+                {showAQI && <AQIHeatmapLayer aqiData={aqiData} />}
 
                 {/* Accident blackspots */}
                 {showBlackspots && blackspotData?.features?.map((f, i) => {
@@ -439,7 +415,7 @@ export default function MapView({
                     ⚠ Blackspots
                 </button>
                 <button
-                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''}`}
+                    className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''} ${loadingIncidents ? 'loading' : ''}`}
                     onClick={() => setShowIncidents(!showIncidents)}
                 >
                     ▲ Live Incidents
