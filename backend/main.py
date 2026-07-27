@@ -2,6 +2,7 @@
 SafeMAPS — FastAPI Application Entry Point  (v0.5.0 — Phase 11: BiDir A* + PWA + PgBouncer)
 """
 
+import asyncio
 import time
 import logging
 from contextlib import asynccontextmanager
@@ -55,11 +56,42 @@ async def require_admin_key(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await db.connect()
-    logger.info("Database pool connected.")
+    # ── Connect + load graph with retry ───────────────────────────────
+    # PgBouncer may not be ready the instant the backend starts during a
+    # full-stack restart. We retry BOTH connect and graph load together so
+    # the pool is fully replaced on each attempt (a broken pool from attempt
+    # 1 cannot be healed by just retrying graph_cache.load).
+    MAX_RETRIES = 8
+    RETRY_DELAY = 5  # seconds between attempts
 
-    node_count = await graph_cache.load(db)
-    logger.info(f"Graph cache warmed: {node_count:,} nodes loaded.")
+    node_count = 0
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            # Tear down any broken pool from a previous attempt
+            try:
+                await db.disconnect()
+            except Exception:
+                pass
+
+            await db.connect()
+            logger.info(f"Database pool connected (attempt {attempt}).")
+
+            node_count = await graph_cache.load(db)
+            logger.info(f"Graph cache warmed: {node_count:,} nodes loaded.")
+            break  # success — exit retry loop
+
+        except Exception as exc:
+            if attempt < MAX_RETRIES:
+                logger.warning(
+                    f"Startup attempt {attempt}/{MAX_RETRIES} failed: {exc}. "
+                    f"Retrying in {RETRY_DELAY}s…"
+                )
+                await asyncio.sleep(RETRY_DELAY)
+            else:
+                logger.critical(
+                    f"Startup failed after {MAX_RETRIES} attempts: {exc}. "
+                    "Server starting without graph — use POST /api/admin/refresh-graph to recover."
+                )
 
     if not settings.admin_api_key:
         logger.warning(

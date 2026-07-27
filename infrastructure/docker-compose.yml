@@ -69,6 +69,10 @@ services:
       WAZE_CCP_URL: ${WAZE_CCP_URL:-}
       X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
       CORS_ORIGINS: "http://localhost:3000,http://frontend"
+      BBOX_MIN_LAT: "12.75"
+      BBOX_MAX_LAT: "13.25"
+      BBOX_MIN_LON: "77.35"
+      BBOX_MAX_LON: "77.90"
     expose:
       - "8000"
     depends_on:
@@ -77,9 +81,9 @@ services:
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:8000/health || exit 1" ]
       interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
 
   frontend:
     build:
