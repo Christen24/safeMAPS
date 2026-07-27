@@ -43,11 +43,13 @@ class Settings(BaseSettings):
     backend_port: int = 8000
     cors_origins: str = "http://localhost:5173"
 
-    # --- Bangalore Bounding Box ---
-    bbox_min_lat: float = 12.85
-    bbox_max_lat: float = 13.15
-    bbox_min_lon: float = 77.45
-    bbox_max_lon: float = 77.78
+    # --- Bengaluru Metropolitan Bounding Box ---
+    # Covers the core city plus common longer-route endpoints such as
+    # Bommasandra, Electronic City, Yelahanka, Kengeri, and Whitefield.
+    bbox_min_lat: float = 12.75
+    bbox_max_lat: float = 13.25
+    bbox_min_lon: float = 77.35
+    bbox_max_lon: float = 77.90
 
     @property
     def database_url(self) -> str:

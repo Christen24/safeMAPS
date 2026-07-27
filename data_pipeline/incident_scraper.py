@@ -50,8 +50,8 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────
 
 BBOX = {
-    "min_lat": 12.85, "max_lat": 13.15,
-    "min_lon": 77.45, "max_lon": 77.78,
+    "min_lat": settings.bbox_min_lat, "max_lat": settings.bbox_max_lat,
+    "min_lon": settings.bbox_min_lon, "max_lon": settings.bbox_max_lon,
 }
 
 OVERPASS_URL   = "https://overpass-api.de/api/interpreter"
@@ -78,14 +78,15 @@ def _in_bbox(lat: float, lon: float) -> bool:
 
 # ── Source 1: OSM Overpass ────────────────────────────────────────────
 
-_OVERPASS_QUERY = """
+_bbox_str = f"{BBOX['min_lat']},{BBOX['min_lon']},{BBOX['max_lat']},{BBOX['max_lon']}"
+_OVERPASS_QUERY = f"""
 [out:json][timeout:20];
 (
-  node["hazard"](12.85,77.45,13.15,77.78);
-  node["accident"](12.85,77.45,13.15,77.78);
-  node["highway"="road_closure"](12.85,77.45,13.15,77.78);
-  node["construction"](12.85,77.45,13.15,77.78);
-  way["highway"="construction"](12.85,77.45,13.15,77.78);
+  node["hazard"]({_bbox_str});
+  node["accident"]({_bbox_str});
+  node["highway"="road_closure"]({_bbox_str});
+  node["construction"]({_bbox_str});
+  way["highway"="construction"]({_bbox_str});
 );
 out center;
 """
