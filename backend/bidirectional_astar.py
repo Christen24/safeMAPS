@@ -64,10 +64,10 @@ def bidirectional_astar(
     beta:      float,
     gamma:     float,
     hour:      Optional[int],
-) -> Optional[list[int]]:
+) -> Optional[list[tuple[int, int, int]]]:
     """
     Run bidirectional A* between start_id and goal_id.
-    Returns a list of edge IDs on the optimal path, or None if unreachable.
+    Returns (from_node, to_node, edge_id) steps on the optimal path, or None if unreachable.
 
     Both forward and backward searches share:
      - graph_cache.nodes          (lat/lon per node)
@@ -143,6 +143,7 @@ def bidirectional_astar(
                 alpha, beta, gamma,
                 get_time_multiplier(road_type, hour),
                 graph_cache.get_incident(edge_id),
+                road_type,
             )
             new_g = g_f[current] + edge_cost
             if new_g < g_f.get(neighbour, float("inf")):
@@ -170,6 +171,7 @@ def bidirectional_astar(
                 alpha, beta, gamma,
                 get_time_multiplier(road_type, hour),
                 graph_cache.get_incident(edge_id),
+                road_type,
             )
             new_g = g_b[current] + edge_cost
             if new_g < g_b.get(neighbour, float("inf")):
@@ -223,21 +225,21 @@ def bidirectional_astar(
 
     # ── Reconstruct path through meeting node ─────────────────────────
     # Forward half: start_id → meeting_node
-    path_edges_fwd: list[int] = []
+    path_edges_fwd: list[tuple[int, int, int]] = []
     cur = meeting_node
     while cur in cf_from:
         prev, edge_id = cf_from[cur]
-        path_edges_fwd.append(edge_id)
+        path_edges_fwd.append((prev, cur, edge_id))
         cur = prev
     path_edges_fwd.reverse()
 
     # Backward half: meeting_node → goal_id
     # The backward graph stores (prev_in_backward = next_in_forward)
-    path_edges_bwd: list[int] = []
+    path_edges_bwd: list[tuple[int, int, int]] = []
     cur = meeting_node
     while cur in cb_from:
         nxt, edge_id = cb_from[cur]
-        path_edges_bwd.append(edge_id)
+        path_edges_bwd.append((cur, nxt, edge_id))
         cur = nxt
 
     return path_edges_fwd + path_edges_bwd

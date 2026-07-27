@@ -42,12 +42,44 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 def get_profile_weights(profile: RouteProfile) -> tuple[float, float, float]:
     """Return (α, β, γ) weights for a named routing profile."""
     profiles = {
+        # Pure travel-time minimization — naturally favours arterials via speed_kmh.
         RouteProfile.FASTEST:    (1.0, 0.0, 0.0),
-        RouteProfile.SAFEST:     (0.2, 0.1, 0.7),
-        RouteProfile.HEALTHIEST: (0.1, 0.7, 0.2),
+        # Risk-dominated; AQI still counts as proxy for traffic density.
+        RouteProfile.SAFEST:     (0.1, 0.15, 0.75),
+        # No time constraint — purely minimize pollution/road-class exposure.
+        RouteProfile.HEALTHIEST: (0.0, 0.85, 0.15),
         RouteProfile.BALANCED:   (0.4, 0.3, 0.3),
     }
     return profiles.get(profile, (0.4, 0.3, 0.3))
+
+
+# Road-class exposure/risk proxies.
+# The AQI grid and accident-blackspot data are both spatially coarse —
+# two parallel roads a block apart (a main road and the gully next to it)
+# can land in the same grid cell / share the same nearest blackspot.
+# Without this, "healthiest"/"safest" collapse onto the same path as
+# "fastest" whenever local data doesn't happen to vary.
+ROAD_TYPE_EXPOSURE: dict[str, float] = {
+    "motorway": 1.8, "motorway_link": 1.6,
+    "trunk": 1.6, "trunk_link": 1.5,
+    "primary": 1.4, "primary_link": 1.3,
+    "secondary": 1.2, "secondary_link": 1.15,
+    "tertiary": 1.0, "tertiary_link": 1.0,
+    "unclassified": 0.9, "residential": 0.75,
+    "living_street": 0.55, "service": 0.65,
+    "road": 1.0,
+}
+
+ROAD_TYPE_RISK_BASELINE: dict[str, float] = {
+    "motorway": 3.0, "motorway_link": 2.5,
+    "trunk": 2.5, "trunk_link": 2.2,
+    "primary": 2.0, "primary_link": 1.7,
+    "secondary": 1.2, "secondary_link": 1.0,
+    "tertiary": 0.6, "tertiary_link": 0.5,
+    "unclassified": 0.4, "residential": 0.2,
+    "living_street": 0.1, "service": 0.15,
+    "road": 0.5,
+}
 
 
 def get_time_multiplier(road_type: str | None, hour: int | None) -> float:
@@ -83,19 +115,29 @@ def compute_edge_cost(
     gamma: float,
     time_multiplier: float = 1.0,
     incident_cost: float = 0.0,
+    road_type: str | None = None,
 ) -> float:
     """
     Composite edge cost:
         C_e = α·T_e + β·AQI_exposure + γ·(R_e + I_e)
 
-    AQI exposure = (AQI / 500) × travel_time_min
-    Risk         = min(risk_score / 10, 1.0)  (normalised)
+    AQI exposure = (AQI × road-class exposure factor / 500) × travel_time_min
+    Risk         = min((R_e × time_multiplier + road-class baseline) / 10, 1.0)
     I_e          = live incident cost (0–10.0 based on severity)
+
+    Road-class factors differentiate a gully from a main road even inside
+    the same coarse AQI grid cell / blackspot radius.
     """
+    key = (road_type or "").lower()
+    exposure_factor = ROAD_TYPE_EXPOSURE.get(key, 1.0)
+    risk_baseline   = ROAD_TYPE_RISK_BASELINE.get(key, 1.0)
+
     travel_time_min = travel_time_s / 60.0
-    aqi_exposure = (aqi_value / 500.0) * travel_time_min
-    risk_norm    = min((risk_score * max(time_multiplier, 1.0)) / 10.0, 1.0)
-    incident_norm = min(incident_cost / 10.0, 1.0)  # normalise incident to [0,1]
+    aqi_exposure = (aqi_value * exposure_factor / 500.0) * travel_time_min
+    risk_norm    = min(
+        (risk_score * max(time_multiplier, 1.0) + risk_baseline) / 10.0, 1.0
+    )
+    incident_norm = min(incident_cost / 10.0, 1.0)
     cost = alpha * travel_time_min + beta * aqi_exposure + gamma * (risk_norm + incident_norm)
     return max(cost, 0.001)
 
@@ -105,7 +147,7 @@ def compute_edge_cost(
 def _astar_search(
     start_id, goal_id, nodes, adjacency, edge_data, alpha, beta, gamma, hour
 ):
-    """Standard unidirectional A*. Returns list of edge_ids or None."""
+    """Standard unidirectional A*. Returns (from_node, to_node, edge_id) steps."""
     if start_id not in nodes or goal_id not in nodes:
         return None
     goal_lat, goal_lon = nodes[goal_id]
@@ -122,13 +164,15 @@ def _astar_search(
         for neighbour, edge_id, length_m, speed_kmh in adjacency.get(current, []):
             speed_ms      = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
+            road_type     = edge_data.get(edge_id, {}).get("road_type")
             edge_cost = compute_edge_cost(
                 travel_time_s,
                 graph_cache.get_aqi(edge_id),
                 graph_cache.get_risk(edge_id),
                 alpha, beta, gamma,
-                get_time_multiplier(edge_data.get(edge_id, {}).get("road_type"), hour),
+                get_time_multiplier(road_type, hour),
                 graph_cache.get_incident(edge_id),
+                road_type,
             )
             tentative_g = g_score[current] + edge_cost
             if tentative_g < g_score.get(neighbour, float("inf")):
@@ -143,14 +187,45 @@ def _astar_search(
 
     if not path_found:
         return None
-    path_edges = []
+    path_steps = []
     cur = goal_id
     while cur in came_from:
         prev, eid = came_from[cur]
-        path_edges.append(eid)
+        path_steps.append((prev, cur, eid))
         cur = prev
-    path_edges.reverse()
-    return path_edges or None
+    path_steps.reverse()
+    return path_steps or None
+
+
+def _coords_match_node(coord: list | tuple, node: tuple[float, float]) -> bool:
+    """Return True when a GeoJSON lon/lat coordinate belongs to a cached node."""
+    if not coord or not node:
+        return False
+    lat, lon = node
+    return abs(float(coord[1]) - float(lat)) < 1e-7 and abs(float(coord[0]) - float(lon)) < 1e-7
+
+
+def _orient_edge_coords(coords: list, from_node: int, to_node: int, nodes: dict) -> list:
+    """Orient stored edge geometry so it follows the actual traversal direction."""
+    if len(coords) < 2:
+        return coords
+
+    from_ll = nodes.get(from_node)
+    to_ll = nodes.get(to_node)
+    if _coords_match_node(coords[0], from_ll) and _coords_match_node(coords[-1], to_ll):
+        return coords
+    if _coords_match_node(coords[-1], from_ll) and _coords_match_node(coords[0], to_ll):
+        return list(reversed(coords))
+
+    # Fallback for tiny precision mismatches: pick the orientation whose first
+    # point is closer to the traversal's from-node.
+    def dist2(coord, node):
+        if not coord or not node:
+            return float("inf")
+        lat, lon = node
+        return (float(coord[1]) - float(lat)) ** 2 + (float(coord[0]) - float(lon)) ** 2
+
+    return coords if dist2(coords[0], from_ll) <= dist2(coords[-1], from_ll) else list(reversed(coords))
 
 async def find_route(
     origin_lat: float,
@@ -199,21 +274,19 @@ async def find_route(
 
     if straight_m >= BIDIRECTIONAL_THRESHOLD_M:
         from bidirectional_astar import bidirectional_astar
-        path_edges = bidirectional_astar(start_id, goal_id, alpha, beta, gamma, hour)
-        if not path_edges:
+        path_steps = bidirectional_astar(start_id, goal_id, alpha, beta, gamma, hour)
+        if not path_steps:
             # Fallback to standard A* if bidirectional fails
-            path_edges = _astar_search(
+            path_steps = _astar_search(
                 start_id, goal_id, nodes, adjacency, edge_data, alpha, beta, gamma, hour
             )
     else:
-        path_edges = _astar_search(
+        path_steps = _astar_search(
             start_id, goal_id, nodes, adjacency, edge_data, alpha, beta, gamma, hour
         )
 
-    if not path_edges:
+    if not path_steps:
         return None
-
-    goal_lat, goal_lon = nodes[goal_id]
 
     # ── Build response ────────────────────────────────────────────────
     segments: list[SegmentInfo] = []
@@ -225,7 +298,7 @@ async def find_route(
     max_aqi = 0.0
     hotspots = 0
 
-    for eid in path_edges:
+    for from_node, to_node, eid in path_steps:
         ed = edge_data.get(eid, {})
         length_m  = ed.get("length_m", 0)
         speed_kmh = ed.get("speed_kmh", 30)
@@ -244,11 +317,15 @@ async def find_route(
             beta,
             gamma,
             time_multiplier,
+            0.0,
+            ed.get("road_type"),
         )
 
-        geom = ed.get("geometry", {"type": "LineString", "coordinates": []})
+        raw_geom = ed.get("geometry", {"type": "LineString", "coordinates": []})
+        geom = raw_geom
         if "coordinates" in geom:
-            coords = geom["coordinates"]
+            coords = _orient_edge_coords(geom["coordinates"], from_node, to_node, nodes)
+            geom = {**geom, "coordinates": coords}
             if coords:
                 if _first_edge:
                     # Fix R3: include all coords for the first edge
@@ -293,7 +370,7 @@ async def find_route(
                 ) / 10.0,
                 1.0,
             )
-            for eid in path_edges
+            for _from_node, _to_node, eid in path_steps
         ),
         travel_time_minutes=total_time / 60.0,
         distance_km=total_distance / 1000.0,

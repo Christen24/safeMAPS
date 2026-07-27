@@ -4,13 +4,13 @@ import L from 'leaflet';
 
 // ── AQI colour scale (matches MapView aqiColor) ───────────────────────
 const STOPS = [
-    [0,   [0,   255, 136]],   // Good — #00ff88
-    [50,  [255, 184,  48]],   // Moderate — #ffb830
-    [100, [255, 140,   0]],   // USG — #ff8c00
-    [150, [255,  69,  96]],   // Unhealthy — #ff4560
-    [200, [176, 107, 255]],   // Very unhealthy — #b06bff
-    [300, [123,  31, 162]],   // Hazardous — #7b1fa2
-    [500, [80,   0, 120]],
+    [0,   [78,  203, 141]],   // Good — #4ecb8d
+    [50,  [240, 169,  62]],   // Moderate — #f0a93e
+    [100, [230, 140,  40]],   // USG — #e68c28
+    [150, [241, 101, 101]],   // Unhealthy — #f16565
+    [200, [155, 135, 232]],   // Very unhealthy — #9b87e8
+    [300, [123,  60, 168]],   // Hazardous — #7b3ca8
+    [500, [80,   30, 110]],
 ];
 
 function aqiToRGB(aqi) {
