@@ -9,7 +9,11 @@ export default defineConfig({
             registerType: 'autoUpdate',
             includeAssets: ['icons/*.png', 'manifest.json'],
             manifest: false,             // use public/manifest.json
+            injectRegister: 'auto',
             workbox: {
+                cleanupOutdatedCaches: true,
+                clientsClaim: true,
+                skipWaiting: true,
                 // Cache the shell (HTML, JS, CSS) and leaflet tiles
                 globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
                 runtimeCaching: [

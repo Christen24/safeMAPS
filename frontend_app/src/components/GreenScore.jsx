@@ -36,10 +36,10 @@ const ScoreGauge = memo(function ScoreGauge({ score }) {
     const circumference = Math.PI * radius;
     const offset      = circumference * (1 - norm / 100);
 
-    const color = score >= 80 ? '#00ff88'
-                : score >= 60 ? '#ffb830'
+    const color = score >= 80 ? '#4ecb8d'
+                : score >= 60 ? '#f0a93e'
                 : score >= 40 ? '#ff8c00'
-                : '#ff4560';
+                : '#f16565';
 
     return (
         <div className="gs-gauge-wrap">
@@ -93,10 +93,10 @@ const StatCard = memo(function StatCard({ icon, label, value, unit, color }) {
 });
 
 function aqiColor(aqi) {
-    if (aqi <= 50)  return '#00ff88';
-    if (aqi <= 100) return '#ffb830';
+    if (aqi <= 50)  return '#4ecb8d';
+    if (aqi <= 100) return '#f0a93e';
     if (aqi <= 150) return '#ff8c00';
-    return '#ff4560';
+    return '#f16565';
 }
 
 // ── Trip row ──────────────────────────────────────────────────
