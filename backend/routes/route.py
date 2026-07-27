@@ -110,6 +110,29 @@ async def compare_routes(
     """
     hour = _parse_hour(departure_time)
 
+    from spatial_queries import snap_to_nearest_node
+    origin_node = await snap_to_nearest_node(origin_lat, origin_lon)
+    dest_node = await snap_to_nearest_node(dest_lat, dest_lon)
+
+    if not origin_node:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No road found within 500m of the origin point. "
+                "This usually means the point is outside the loaded road-network area. "
+                "Reload OSM data with the expanded Bengaluru bbox, or pick an origin closer to a mapped road."
+            ),
+        )
+    if not dest_node:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No road found within 500m of the destination point. "
+                "This usually means the point is outside the loaded road-network area. "
+                "Reload OSM data with the expanded Bengaluru bbox, or pick a destination closer to a mapped road."
+            ),
+        )
+
     results = await asyncio.gather(*[
         find_route(
             origin_lat=origin_lat,
@@ -129,7 +152,10 @@ async def compare_routes(
     if not routes:
         raise HTTPException(
             status_code=404,
-            detail="No routes found between the given points.",
+            detail=(
+                "No routes found between the snapped road nodes. "
+                "The road graph may be disconnected or still loaded with the older, smaller bbox."
+            ),
         )
 
     return CompareRoutesResponse(routes=routes)

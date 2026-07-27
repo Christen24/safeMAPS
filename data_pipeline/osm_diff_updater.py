@@ -55,7 +55,7 @@ DATA_DIR = Path(
     or Path(__file__).parent / "data"
 )
 
-BANGALORE_BBOX = "12.85,77.45,13.15,77.78"   # min_lat,min_lon,max_lat,max_lon
+BANGALORE_BBOX = "12.75,77.35,13.25,77.90"   # min_lat,min_lon,max_lat,max_lon
 
 # Road types we care about
 ROAD_TYPES = {
