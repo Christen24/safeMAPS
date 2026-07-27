@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import {
     MapContainer, TileLayer, Polyline, Marker,
-    Popup, CircleMarker, useMapEvents, useMap,
+    Popup, CircleMarker, Rectangle, useMapEvents, useMap,
 } from 'react-leaflet';
 
 import AQIHeatmapLayer from './AQIHeatmapLayer';
@@ -16,6 +16,15 @@ L.Icon.Default.mergeOptions({
     iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
     shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
+
+// Loaded OSM road-network coverage — must match backend/config.py
+// (bbox_min_lat/max_lat/min_lon/max_lon). Shown as a boundary overlay so
+// clicks near the edge (which fail with "no road found within 500m")
+// are visually explained rather than a mystery.
+const NETWORK_BOUNDS = [
+    [12.85, 77.45],
+    [13.15, 77.78],
+];
 
 // ── Custom markers — tactical crosshair style ─────────────────
 function makeIcon(ring, fill) {
@@ -35,8 +44,8 @@ function makeIcon(ring, fill) {
     });
 }
 
-const originIcon = makeIcon('#00ff88', '#00ff88');
-const destIcon   = makeIcon('#ff4560', '#ff4560');
+const originIcon = makeIcon('#4ecb8d', '#4ecb8d');
+const destIcon   = makeIcon('#f16565', '#f16565');
 
 // ── Incident triangle icons ───────────────────────────────────
 // accident=orange-red, closure=red, waterlogging=blue, construction=amber, hazard=yellow
@@ -65,19 +74,19 @@ function makeTriangleIcon(color) {
 
 // ── Profile colours ───────────────────────────────────────────
 const PROFILE_COLORS = {
-    balanced:   '#b06bff',
-    fastest:    '#5db8ff',
-    safest:     '#00ff88',
-    healthiest: '#ffb830',
+    balanced:   '#9b87e8',
+    fastest:    '#4fc3e0',
+    safest:     '#4ecb8d',
+    healthiest: '#f0a93e',
 };
 
 // ── AQI colour scale ──────────────────────────────────────────
 export function aqiColor(aqi) {
-    if (aqi <= 50)  return '#00ff88';   // Good — acid green
-    if (aqi <= 100) return '#ffb830';   // Moderate — amber
+    if (aqi <= 50)  return '#4ecb8d';   // Good — acid green
+    if (aqi <= 100) return '#f0a93e';   // Moderate — amber
     if (aqi <= 150) return '#ff8c00';   // Unhealthy sensitive — dark orange
-    if (aqi <= 200) return '#ff4560';   // Unhealthy — infrared
-    if (aqi <= 300) return '#b06bff';   // Very unhealthy — violet
+    if (aqi <= 200) return '#f16565';   // Unhealthy — infrared
+    if (aqi <= 300) return '#9b87e8';   // Very unhealthy — violet
     return '#7b1fa2';                   // Hazardous — deep purple
 }
 
@@ -197,7 +206,7 @@ function SelectedRoute({ route }) {
 
     // Fallback — mock routes with no segment data
     const coords = route?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
-    const color  = PROFILE_COLORS[route.profile] || '#00ff88';
+    const color  = PROFILE_COLORS[route.profile] || '#4ecb8d';
     return (
         <>
             <Polyline positions={coords} pathOptions={{ color, weight: 5, opacity: 0.9, lineCap: 'round' }} />
@@ -240,14 +249,29 @@ export default function MapView({
                 style={{ height: '100%', width: '100%' }}
                 zoomControl={true}
             >
-                {/* Tactical satellite map tiles */}
+                {/* Labeled street basemap — streets, place names, POIs */}
                 <TileLayer
-                    attribution='&copy; <a href="https://www.esri.com/">Esri</a>'
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                    url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+                    subdomains="abcd"
+                    maxZoom={20}
                 />
 
                 <MapEvents onMapClick={onMapClick} onBoundsChange={onBoundsChange} />
                 {selectedRoute && <FitBounds route={selectedRoute} />}
+
+                {/* Loaded road-network coverage boundary — clicks outside
+                    this (or within ~500m of its edge) won't find a road. */}
+                <Rectangle
+                    bounds={NETWORK_BOUNDS}
+                    pathOptions={{
+                        color: '#838cb0',
+                        weight: 1,
+                        dashArray: '6 6',
+                        fill: false,
+                        interactive: false,
+                    }}
+                />
 
                 {/* Origin marker */}
                 {origin.lat && origin.lon && (
@@ -256,13 +280,13 @@ export default function MapView({
                             <div style={{
                                 fontFamily: 'JetBrains Mono, monospace',
                                 fontSize: '11px',
-                                color: '#00ff88',
+                                color: '#4ecb8d',
                                 background: '#090c14',
                                 padding: '6px 8px',
                                 borderRadius: '2px',
                             }}>
                                 ◎ ORIGIN<br />
-                                <span style={{ color: '#6b7a99' }}>
+                                <span style={{ color: '#b3bbd6' }}>
                                     {(+origin.lat).toFixed(5)}, {(+origin.lon).toFixed(5)}
                                 </span>
                             </div>
@@ -277,13 +301,13 @@ export default function MapView({
                             <div style={{
                                 fontFamily: 'JetBrains Mono, monospace',
                                 fontSize: '11px',
-                                color: '#ff4560',
+                                color: '#f16565',
                                 background: '#090c14',
                                 padding: '6px 8px',
                                 borderRadius: '2px',
                             }}>
                                 ◎ DESTINATION<br />
-                                <span style={{ color: '#6b7a99' }}>
+                                <span style={{ color: '#b3bbd6' }}>
                                     {(+destination.lat).toFixed(5)}, {(+destination.lon).toFixed(5)}
                                 </span>
                             </div>
@@ -299,7 +323,7 @@ export default function MapView({
                             key={r.route_id}
                             positions={toLL(r)}
                             pathOptions={{
-                                color:     PROFILE_COLORS[r.profile] || '#6b7a99',
+                                color:     PROFILE_COLORS[r.profile] || '#b3bbd6',
                                 weight:    2,
                                 opacity:   0.18,
                                 dashArray: '6,5',
@@ -324,8 +348,8 @@ export default function MapView({
                             center={[lat, lon]}
                             radius={r}
                             pathOptions={{
-                                color:       '#ff4560',
-                                fillColor:   '#ff4560',
+                                color:       '#f16565',
+                                fillColor:   '#f16565',
                                 fillOpacity: 0.25,
                                 weight:      1,
                             }}
@@ -340,15 +364,15 @@ export default function MapView({
                                     color: '#d8e0f0',
                                     minWidth: '160px',
                                 }}>
-                                    <div style={{ color: '#ff4560', marginBottom: 4 }}>
+                                    <div style={{ color: '#f16565', marginBottom: 4 }}>
                                         ⚠ BLACKSPOT
                                     </div>
-                                    <div style={{ color: '#6b7a99', fontSize: '10px' }}>
+                                    <div style={{ color: '#b3bbd6', fontSize: '10px' }}>
                                         SEV: {p.severity?.toUpperCase()}<br />
                                         ACCIDENTS: {p.total_accidents} (FATAL: {p.fatal_accidents})
                                     </div>
                                     {p.description && (
-                                        <div style={{ marginTop: 4, fontSize: '10px', color: '#3d4a60' }}>
+                                        <div style={{ marginTop: 4, fontSize: '10px', color: '#838cb0' }}>
                                             {p.description}
                                         </div>
                                     )}
@@ -382,7 +406,7 @@ export default function MapView({
                                     <div style={{ color, marginBottom: 4, fontWeight: 700 }}>
                                         ⚠ {p.incident_type?.toUpperCase()}
                                     </div>
-                                    <div style={{ color: '#6b7a99', fontSize: '10px' }}>
+                                    <div style={{ color: '#b3bbd6', fontSize: '10px' }}>
                                         SRC: {p.source?.toUpperCase()} &nbsp; SEV: {p.severity}/3
                                     </div>
                                     {p.description && (
@@ -390,7 +414,7 @@ export default function MapView({
                                             {p.description.slice(0, 120)}
                                         </div>
                                     )}
-                                    <div style={{ marginTop: 4, fontSize: '9px', color: '#3d4a60' }}>
+                                    <div style={{ marginTop: 4, fontSize: '9px', color: '#838cb0' }}>
                                         EXPIRES: {new Date(p.expires_at).toLocaleTimeString()}
                                     </div>
                                 </div>
@@ -431,11 +455,11 @@ export default function MapView({
                     <h4>AQI Scale</h4>
                     <div className="legend-items">
                         {[
-                            ['#00ff88', '0–50 Good'],
-                            ['#ffb830', '51–100 Moderate'],
+                            ['#4ecb8d', '0–50 Good'],
+                            ['#f0a93e', '51–100 Moderate'],
                             ['#ff8c00', '101–150 USG'],
-                            ['#ff4560', '151–200 Unhealthy'],
-                            ['#b06bff', '200+ Hazardous'],
+                            ['#f16565', '151–200 Unhealthy'],
+                            ['#9b87e8', '200+ Hazardous'],
                         ].map(([c, l]) => (
                             <div className="legend-item" key={l}>
                                 <div className="legend-swatch" style={{ background: c }} />
