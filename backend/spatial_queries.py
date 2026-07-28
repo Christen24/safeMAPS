@@ -23,23 +23,36 @@ async def snap_to_nearest_node(
     or river) silently returns a node several km away, producing routes
     that start/end at the wrong location with no user feedback.
     Returns None if no node is found within max_distance_m.
+
+    Fix R2: road_nodes contains every node referenced by an accepted OSM
+    way, including pure shape/curve points that only exist to describe a
+    road's geometry — not just true intersections/endpoints. Only nodes
+    that appear as a source_node or target_node in road_segments are
+    actual graph vertices with edges attached; anything else has degree
+    0 and produces "no route found" even though the snap itself
+    "succeeded". Restrict candidates to real graph vertices so this can't
+    happen.
     """
     query = """
         SELECT
-            id,
-            ST_Y(geom) AS lat,
-            ST_X(geom) AS lon,
+            n.id,
+            ST_Y(n.geom) AS lat,
+            ST_X(n.geom) AS lon,
             ST_Distance(
-                geom::geography,
+                n.geom::geography,
                 ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
             ) AS distance_m
-        FROM road_nodes
+        FROM road_nodes n
         WHERE ST_DWithin(
-            geom::geography,
+            n.geom::geography,
             ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
             $3
         )
-        ORDER BY geom <-> ST_SetSRID(ST_MakePoint($2, $1), 4326)
+        AND EXISTS (
+            SELECT 1 FROM road_segments rs
+            WHERE rs.source_node = n.id OR rs.target_node = n.id
+        )
+        ORDER BY n.geom <-> ST_SetSRID(ST_MakePoint($2, $1), 4326)
         LIMIT 1;
     """
     row = await db.fetchrow(query, lat, lon, max_distance_m)
