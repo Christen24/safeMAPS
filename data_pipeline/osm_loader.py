@@ -357,7 +357,7 @@ async def import_to_postgis(
                      length_m, speed_kmh, oneway, geom)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
                         ST_SetSRID(ST_GeomFromText($9), 4326))
-                ON CONFLICT DO NOTHING;
+                ON CONFLICT (osm_id, source_node, target_node) DO NOTHING;
             """, batch)
             logger.info(f"  Edges: {min(i + BATCH_SIZE, len(edge_records)):,} / {len(edge_records):,}")
 
