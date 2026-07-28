@@ -104,6 +104,7 @@ export default function App() {
     const [showIncidents, setShowIncidents]   = useState(true);
     const [aqiData, setAqiData]               = useState(null);
     const [loadingAQI, setLoadingAQI]         = useState(false);
+    const [locatingUser, setLocatingUser]     = useState(false);
     const [blackspotData, setBlackspotData]   = useState(null);
     const [mapBounds, setMapBounds]           = useState(null);
     const [isOffline, setIsOffline]           = useState(false);
@@ -117,7 +118,8 @@ export default function App() {
     useEffect(() => { destinationRef.current = destination; }, [destination]);
     const [bannerDismissed, setBannerDismissed] = useState(false);
     const [shareCopied, setShareCopied]       = useState(false);
-    const [incidents, setIncidents]           = useState([]);
+    const [incidents, setIncidents]           = useState(null);
+    const [loadingIncidents, setLoadingIncidents] = useState(false);
     const pendingAutoCompute                  = useRef(false);
 
     // ── Decode URL params on mount → auto-fill + auto-compute ─────────
@@ -141,8 +143,7 @@ export default function App() {
             origin.lat && destination.lat && !autoComputeRan.current) {
             autoComputeRan.current = true;
             pendingAutoCompute.current = false;
-            // small delay so map renders first
-            setTimeout(() => computeRoute(), 200);
+            computeRouteWithCoords(origin, destination, profile);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [view, origin.lat, destination.lat]);
@@ -182,6 +183,7 @@ export default function App() {
     useEffect(() => {
         let cancelled = false;
         const fetchIncidents = async () => {
+            if (!cancelled) setLoadingIncidents(true);
             try {
                 const resp = await fetch(`${API_BASE}/incidents/active?limit=300`);
                 if (resp.ok) {
@@ -189,6 +191,9 @@ export default function App() {
                     if (!cancelled) setIncidents(data);
                 }
             } catch (err) { console.warn('Incidents fetch failed:', err.message); }
+            finally {
+                if (!cancelled) setLoadingIncidents(false);
+            }
         };
         fetchIncidents();
         const id = setInterval(fetchIncidents, 10 * 60 * 1000);
@@ -288,23 +293,19 @@ export default function App() {
         } catch (err) { console.warn('Trip record failed:', err.message); }
     }, [origin, destination]);
 
-    const computeRoute = useCallback(async () => {
-        if (!origin.lat || !origin.lon || !destination.lat || !destination.lon) {
-            setError('Enter valid coordinates for both points.');
-            return;
-        }
+    const _fetchRoute = useCallback(async (org, dst, prof, wts, depTime, custom) => {
         setLoading(true); setError(null);
         try {
             let chosen = null;
-            if (isCustomWeight()) {
+            if (custom) {
                 const body = {
-                    origin: { lat: +origin.lat, lon: +origin.lon },
-                    destination: { lat: +destination.lat, lon: +destination.lon },
-                    profile,
-                    alpha: weights.alpha, beta: weights.beta, gamma: weights.gamma,
+                    origin: { lat: +org.lat, lon: +org.lon },
+                    destination: { lat: +dst.lat, lon: +dst.lon },
+                    profile: prof,
+                    alpha: wts.alpha, beta: wts.beta, gamma: wts.gamma,
                     use_custom_weights: true,
                 };
-                if (departureTime) body.departure_time = departureTime;
+                if (depTime) body.departure_time = depTime;
                 const resp = await fetch(`${API_BASE}/route`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -315,29 +316,93 @@ export default function App() {
                 setRoutes([route]); setSelectedRoute(route); chosen = route;
             } else {
                 const params = new URLSearchParams({
-                    origin_lat: origin.lat, origin_lon: origin.lon,
-                    dest_lat: destination.lat, dest_lon: destination.lon,
+                    origin_lat: org.lat, origin_lon: org.lon,
+                    dest_lat: dst.lat, dest_lon: dst.lon,
                 });
-                if (departureTime) params.set('departure_time', departureTime);
+                if (depTime) params.set('departure_time', depTime);
                 const resp = await fetch(`${API_BASE}/route/compare?${params}`);
                 if (!resp.ok) throw new Error((await resp.json()).detail || 'Route failed');
                 const data = await resp.json();
                 setRoutes(data.routes);
-                const sel = data.routes.find(r => r.profile === profile) || data.routes[0];
+                const sel = data.routes.find(r => r.profile === prof) || data.routes[0];
                 setSelectedRoute(sel); chosen = sel;
             }
             if (chosen) {
                 recordTrip(chosen);
-                // Encode route to URL for sharing/bookmarking
-                encodeRouteToURL(origin, destination, profile, departureTime);
+                encodeRouteToURL(org, dst, prof, depTime);
             }
+            return true;
         } catch (err) {
-            setError(err.message || 'Route computation failed');
-            const mocks = getMockRoutes();
-            setRoutes(mocks);
-            setSelectedRoute(mocks.find(r => r.profile === profile) || mocks[0]);
+            console.error('Route computation failed:', err);
+            setError((err.message || 'Route computation failed') + ' — showing no route rather than a placeholder.');
+            setRoutes([]);
+            setSelectedRoute(null);
+            return false;
         } finally { setLoading(false); }
-    }, [origin, destination, profile, weights, departureTime, isCustomWeight, recordTrip]);
+    }, [recordTrip]);
+
+    const computeRoute = useCallback(async () => {
+        if (!origin.lat || !origin.lon || !destination.lat || !destination.lon) {
+            setError('Enter valid coordinates for both points.');
+            return;
+        }
+        await _fetchRoute(origin, destination, profile, weights, departureTime, isCustomWeight());
+    }, [origin, destination, profile, weights, departureTime, isCustomWeight, _fetchRoute]);
+
+    const computeRouteWithCoords = useCallback(async (org, dst, prof) => {
+        if (!org.lat || !org.lon || !dst.lat || !dst.lon) return false;
+        const preset = PRESET_WEIGHTS[prof] || weights;
+        return await _fetchRoute(org, dst, prof, preset, departureTime, false);
+    }, [weights, departureTime, _fetchRoute]);
+
+    const handleUseCurrentLocation = useCallback(() => {
+        if (!navigator.geolocation) {
+            setError('Live location is not supported by this browser.');
+            return;
+        }
+
+        setLocatingUser(true);
+        setError(null);
+        navigator.geolocation.getCurrentPosition(
+            async (pos) => {
+                const accuracy = pos.coords.accuracy; // metres — browser-reported confidence radius
+                const nextOrigin = {
+                    lat: pos.coords.latitude.toFixed(6),
+                    lon: pos.coords.longitude.toFixed(6),
+                };
+                setOrigin(nextOrigin);
+                setLocatingUser(false);
+
+                if (destinationRef.current.lat && destinationRef.current.lon) {
+                    const ok = await computeRouteWithCoords(nextOrigin, destinationRef.current, profile);
+                    // Bug fix: without a GPS chip, browser geolocation falls back
+                    // to WiFi/IP-based positioning, which can be off by hundreds
+                    // of metres to a few km — easily past the 500m snap radius
+                    // the backend uses to avoid snapping to a road nowhere near
+                    // where you actually are. A manual map click never hits this
+                    // because you're always choosing a point visibly near a road.
+                    // When the route fails AND the browser itself reported low
+                    // confidence, say so specifically instead of the generic
+                    // "no road found" message.
+                    if (!ok && accuracy > 300) {
+                        setError(
+                            `Your device reported an imprecise location (~${Math.round(accuracy)}m accuracy), ` +
+                            `which is likely why no nearby road was found. Try again near a window/outdoors for a ` +
+                            `better fix, or drag the origin marker to your actual position on the map instead.`
+                        );
+                    }
+                }
+            },
+            (geoError) => {
+                setLocatingUser(false);
+                const message = geoError.code === geoError.PERMISSION_DENIED
+                    ? 'Location permission was denied. Allow location access and try again.'
+                    : 'Could not fetch your live location. Check GPS or browser permissions.';
+                setError(message);
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+        );
+    }, [computeRouteWithCoords, profile]);
 
     // Stable callback — reads origin/destination via refs to avoid
     // giving useMapEvents a new function ref on every click (React #310).
@@ -366,9 +431,8 @@ export default function App() {
         setDestination(comDest);
         handleProfileChange(comProfile);
         setRoutes([]); setSelectedRoute(null); setError(null);
-        setTimeout(() => computeRoute(), 200);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [handleProfileChange]);
+        computeRouteWithCoords(comOrigin, comDest, comProfile);
+    }, [handleProfileChange, computeRouteWithCoords]);
 
     if (view === 'landing') {
         return <LandingPage onStart={() => setView('dashboard')} />;
@@ -382,7 +446,7 @@ export default function App() {
                 {showBanner && (
                     <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
                 )}
-                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.length ?? 0} />
+                <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.total ?? incidents?.features?.length ?? 0} />
                 <div className="main-content gs-page" style={{ marginTop: 0 }}>
                     <GreenScore />
                 </div>
@@ -396,7 +460,7 @@ export default function App() {
             {showBanner && (
                 <OfflineBanner onDismiss={() => setBannerDismissed(true)} />
             )}
-            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.length ?? 0} />
+            <NavBar view={view} setView={setView} handleShowAQI={handleShowAQI} isOffline={isOffline} incidentCount={incidents?.total ?? incidents?.features?.length ?? 0} />
             <div className="main-content">
                 <Sidebar
                     origin={origin} destination={destination}
@@ -408,6 +472,8 @@ export default function App() {
                     setSelectedRoute={setSelectedRoute}
                     onCompute={computeRoute} onSwap={swapPoints}
                     loading={loading} error={error}
+                    locatingUser={locatingUser}
+                    onUseCurrentLocation={handleUseCurrentLocation}
                     onShare={handleShare} shareCopied={shareCopied}
                     onLoadCommute={handleLoadCommute}
                 />
@@ -420,6 +486,7 @@ export default function App() {
                     aqiData={aqiData} blackspotData={blackspotData}
                     loadingAQI={loadingAQI}
                     incidentData={incidents}
+                    loadingIncidents={loadingIncidents}
                     loading={loading} onMapClick={handleMapClick}
                     onBoundsChange={handleBoundsChange}
                 />
