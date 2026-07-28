@@ -13,8 +13,8 @@ import L from 'leaflet';
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
     iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-    iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-    shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
 // Loaded OSM road-network coverage — must match backend/config.py
@@ -22,8 +22,8 @@ L.Icon.Default.mergeOptions({
 // clicks near the edge (which fail with "no road found within 500m")
 // are visually explained rather than a mystery.
 const NETWORK_BOUNDS = [
-    [12.85, 77.45],
-    [13.15, 77.78],
+    [12.75, 77.35],
+    [13.25, 77.90],
 ];
 
 // ── Custom markers — tactical crosshair style ─────────────────
@@ -39,22 +39,22 @@ function makeIcon(ring, fill) {
             <line x1="2"  y1="11" x2="6"  y2="11" stroke="${ring}" stroke-width="1" opacity="0.5"/>
             <line x1="16" y1="11" x2="20" y2="11" stroke="${ring}" stroke-width="1" opacity="0.5"/>
           </svg>`,
-        iconSize:   [22, 22],
+        iconSize: [22, 22],
         iconAnchor: [11, 11],
     });
 }
 
 const originIcon = makeIcon('#4ecb8d', '#4ecb8d');
-const destIcon   = makeIcon('#f16565', '#f16565');
+const destIcon = makeIcon('#f16565', '#f16565');
 
 // ── Incident triangle icons ───────────────────────────────────
 // accident=orange-red, closure=red, waterlogging=blue, construction=amber, hazard=yellow
 const INCIDENT_COLORS = {
-    accident:     '#f97316',
-    closure:      '#ef4444',
+    accident: '#f97316',
+    closure: '#ef4444',
     waterlogging: '#3b82f6',
     construction: '#f59e0b',
-    hazard:       '#eab308',
+    hazard: '#eab308',
 };
 
 function makeTriangleIcon(color) {
@@ -67,22 +67,22 @@ function makeTriangleIcon(color) {
             <text x="10" y="14" text-anchor="middle" font-size="8" font-family="monospace"
                   fill="#0d1117" font-weight="bold">⚠</text>
           </svg>`,
-        iconSize:   [20, 18],
+        iconSize: [20, 18],
         iconAnchor: [10, 18],
     });
 }
 
 // ── Profile colours ───────────────────────────────────────────
 const PROFILE_COLORS = {
-    balanced:   '#9b87e8',
-    fastest:    '#4fc3e0',
-    safest:     '#4ecb8d',
+    balanced: '#9b87e8',
+    fastest: '#4fc3e0',
+    safest: '#4ecb8d',
     healthiest: '#f0a93e',
 };
 
 // ── AQI colour scale ──────────────────────────────────────────
 export function aqiColor(aqi) {
-    if (aqi <= 50)  return '#4ecb8d';   // Good — acid green
+    if (aqi <= 50) return '#4ecb8d';   // Good — acid green
     if (aqi <= 100) return '#f0a93e';   // Moderate — amber
     if (aqi <= 150) return '#ff8c00';   // Unhealthy sensitive — dark orange
     if (aqi <= 200) return '#f16565';   // Unhealthy — infrared
@@ -134,7 +134,7 @@ function MapEvents({ onMapClick, onBoundsChange }) {
         const b = mapInstance.getBounds();
         onBoundsChange({
             north: b.getNorth(), south: b.getSouth(),
-            east:  b.getEast(),  west:  b.getWest(),
+            east: b.getEast(), west: b.getWest(),
         });
     }, [onBoundsChange]);
 
@@ -178,10 +178,10 @@ function SelectedRoute({ route }) {
                         key={`run-${i}`}
                         positions={run.coords}
                         pathOptions={{
-                            color:    run.color,
-                            weight:   5,
-                            opacity:  0.9,
-                            lineCap:  'round',
+                            color: run.color,
+                            weight: 5,
+                            opacity: 0.9,
+                            lineCap: 'round',
                             lineJoin: 'round',
                         }}
                     />
@@ -192,10 +192,10 @@ function SelectedRoute({ route }) {
                         key={`glow-${i}`}
                         positions={run.coords}
                         pathOptions={{
-                            color:    run.color,
-                            weight:   10,
-                            opacity:  0.12,
-                            lineCap:  'round',
+                            color: run.color,
+                            weight: 10,
+                            opacity: 0.12,
+                            lineCap: 'round',
                             lineJoin: 'round',
                         }}
                     />
@@ -206,7 +206,7 @@ function SelectedRoute({ route }) {
 
     // Fallback — mock routes with no segment data
     const coords = route?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
-    const color  = PROFILE_COLORS[route.profile] || '#4ecb8d';
+    const color = PROFILE_COLORS[route.profile] || '#4ecb8d';
     return (
         <>
             <Polyline positions={coords} pathOptions={{ color, weight: 5, opacity: 0.9, lineCap: 'round' }} />
@@ -323,9 +323,9 @@ export default function MapView({
                             key={r.route_id}
                             positions={toLL(r)}
                             pathOptions={{
-                                color:     PROFILE_COLORS[r.profile] || '#b3bbd6',
-                                weight:    2,
-                                opacity:   0.18,
+                                color: PROFILE_COLORS[r.profile] || '#b3bbd6',
+                                weight: 2,
+                                opacity: 0.18,
                                 dashArray: '6,5',
                             }}
                         />
@@ -348,10 +348,10 @@ export default function MapView({
                             center={[lat, lon]}
                             radius={r}
                             pathOptions={{
-                                color:       '#f16565',
-                                fillColor:   '#f16565',
+                                color: '#f16565',
+                                fillColor: '#f16565',
                                 fillOpacity: 0.25,
-                                weight:      1,
+                                weight: 1,
                             }}
                         >
                             <Popup>

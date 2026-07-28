@@ -47,7 +47,7 @@ export default defineConfig({
                             cacheName: 'api-routes',
                             expiration: { maxEntries: 5, maxAgeSeconds: 3600 },
                             // Bug fix: without this, NetworkFirst caches ANY
-                            // response fetch() resolves — including 404/422
+                            // response fetch() resolves -- including 404/422
                             // error bodies, since a bad HTTP status still
                             // counts as a "successful" fetch. That meant a
                             // route that failed once (e.g. during the bbox/
@@ -82,7 +82,7 @@ export default defineConfig({
                 // Split large chunks for better caching
                 manualChunks: {
                     leaflet: ['leaflet', 'react-leaflet'],
-                    react:   ['react', 'react-dom'],
+                    react: ['react', 'react-dom'],
                 },
             },
         },

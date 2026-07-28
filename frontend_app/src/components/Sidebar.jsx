@@ -147,6 +147,7 @@ export default function Sidebar({
     departureTime, setDepartureTime,
     routes, selectedRoute, setSelectedRoute,
     onCompute, onSwap, loading, error,
+    locatingUser, onUseCurrentLocation,
     onShare, shareCopied,
     onLoadCommute,
 }) {
@@ -190,6 +191,17 @@ export default function Sidebar({
                     onSelect={setOrigin}
                     indicator="origin"
                 />
+
+                <button
+                    type="button"
+                    className={`live-location-btn ${locatingUser ? 'locating' : ''}`}
+                    onClick={onUseCurrentLocation}
+                    disabled={locatingUser || loading}
+                    title="Use live location as origin"
+                >
+                    <span className="live-location-icon">📍</span>
+                    <span>{locatingUser ? 'Fetching live location...' : 'Use live location as origin'}</span>
+                </button>
 
                 <div className="input-connector">
                     <div className="connector-line" />
