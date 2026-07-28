@@ -46,6 +46,16 @@ export default defineConfig({
                         options: {
                             cacheName: 'api-routes',
                             expiration: { maxEntries: 5, maxAgeSeconds: 3600 },
+                            // Bug fix: without this, NetworkFirst caches ANY
+                            // response fetch() resolves — including 404/422
+                            // error bodies, since a bad HTTP status still
+                            // counts as a "successful" fetch. That meant a
+                            // route that failed once (e.g. during the bbox/
+                            // graph issues) stayed cached as a false failure
+                            // for up to an hour even after the backend was
+                            // fixed. Only cache genuine 200s.
+                            cacheableResponse: { statuses: [0, 200] },
+                            networkTimeoutSeconds: 5,
                         },
                     },
                 ],
