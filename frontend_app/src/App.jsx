@@ -18,6 +18,24 @@ const PRESET_WEIGHTS = {
 };
 
 // ── Nav bar (extracted for reuse across views) ─────────────────
+function haversineMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function bearingDeg(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180;
+    const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+        Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
 function useIST() {
     const [time, setTime] = useState(() =>
         new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata', hour12: false })
@@ -108,14 +126,24 @@ export default function App() {
     const [blackspotData, setBlackspotData]   = useState(null);
     const [mapBounds, setMapBounds]           = useState(null);
     const [isOffline, setIsOffline]           = useState(false);
+    const [navigating, setNavigating]         = useState(false);
+    const [livePosition, setLivePosition]     = useState(null); // {lat, lon, heading, accuracy}
+    const [currentStep, setCurrentStep]       = useState(0);
+    const [navError, setNavError]             = useState(null);
+    const [recenterTick, setRecenterTick]     = useState(0); // bump to signal MapView to recenter
+
+    const watchIdRef     = useRef(null);
+    const lastFixRef     = useRef(null); // previous {lat, lon} — used to derive heading when coords.heading is null
     // ── Stable refs so callbacks don't recreate on every state change ─
     const showAQIRef    = useRef(showAQI);
     const fetchAQIRef   = useRef(null);
     const originRef     = useRef(origin);
     const destinationRef = useRef(destination);
+    const selectedRouteRef = useRef(null);
     useEffect(() => { showAQIRef.current = showAQI; }, [showAQI]);
     useEffect(() => { originRef.current = origin; }, [origin]);
     useEffect(() => { destinationRef.current = destination; }, [destination]);
+    useEffect(() => { selectedRouteRef.current = selectedRoute; }, [selectedRoute]);
     const [bannerDismissed, setBannerDismissed] = useState(false);
     const [shareCopied, setShareCopied]       = useState(false);
     const [incidents, setIncidents]           = useState(null);
@@ -404,6 +432,124 @@ export default function App() {
         );
     }, [computeRouteWithCoords, profile]);
 
+    // ── Journey mode: live tracking + turn-by-turn ──────────────────
+    // Design notes:
+    // - Uses watchPosition (continuous), not getCurrentPosition (one-shot) —
+    //   "Use my location" above is a one-time origin pick; this is ongoing.
+    // - The arrow is drawn at the raw GPS fix, not snapped onto the route
+    //   line. Snapping to the nearest point on the polyline is a real
+    //   improvement (GPS jitter off a road edge looks bad) but adds a
+    //   nearest-point-on-polyline projection step; left as a follow-up
+    //   rather than risking an untested projection bug in this pass.
+    // - heading: coords.heading is frequently null on desktop/stationary
+    //   devices. Falls back to the bearing between this fix and the last
+    //   one, so the arrow still rotates sensibly while walking/driving
+    //   even when the browser doesn't report a heading directly.
+    const handlePositionUpdate = useCallback((pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        let heading = pos.coords.heading;
+
+        if ((heading === null || Number.isNaN(heading)) && lastFixRef.current) {
+            const prev = lastFixRef.current;
+            const moved = haversineMeters(prev.lat, prev.lon, lat, lon);
+            if (moved > 3) { // ignore GPS jitter under ~3m — bearing would be noise
+                heading = bearingDeg(prev.lat, prev.lon, lat, lon);
+            } else {
+                heading = prev.heading ?? 0;
+            }
+        }
+        heading = heading ?? 0;
+        lastFixRef.current = { lat, lon, heading };
+
+        setLivePosition({ lat, lon, heading, accuracy: pos.coords.accuracy });
+        setNavError(null);
+
+        // Advance to the next instruction once we're close to the start
+        // of the step after the current one (25m threshold — rough, but
+        // avoids flapping back and forth right at a turn).
+        setCurrentStep(prevStep => {
+            const route = selectedRouteRef.current;
+            const steps = route?.instructions;
+            if (!steps || prevStep >= steps.length - 1) return prevStep;
+            const next = steps[prevStep + 1];
+            if (!next?.location) return prevStep;
+            const d = haversineMeters(lat, lon, next.location.lat, next.location.lon);
+            return d < 25 ? prevStep + 1 : prevStep;
+        });
+    }, []);
+
+    const startJourney = useCallback(() => {
+        if (!selectedRoute) {
+            setNavError('Compute a route before starting a journey.');
+            return;
+        }
+        if (!navigator.geolocation) {
+            setNavError('Live location is not supported by this browser.');
+            return;
+        }
+        setCurrentStep(0);
+        setNavError(null);
+        setNavigating(true);
+        watchIdRef.current = navigator.geolocation.watchPosition(
+            handlePositionUpdate,
+            (geoError) => {
+                const message = geoError.code === geoError.PERMISSION_DENIED
+                    ? 'Location permission was denied. Allow location access to navigate.'
+                    : 'Lost live location signal. Check GPS/permissions.';
+                setNavError(message);
+            },
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+        );
+    }, [selectedRoute, handlePositionUpdate]);
+
+    const stopJourney = useCallback(() => {
+        if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+        }
+        setNavigating(false);
+        setLivePosition(null);
+        setCurrentStep(0);
+        lastFixRef.current = null;
+    }, []);
+
+    // Clean up the GPS watch if the component unmounts mid-journey
+    useEffect(() => {
+        return () => {
+            if (watchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(watchIdRef.current);
+            }
+        };
+    }, []);
+
+    // "My Location" recenter button — works whether or not a journey is
+    // active. During a journey, reuses the live-tracked position (no
+    // extra GPS call); otherwise takes a fresh one-shot fix.
+    const handleRecenter = useCallback(() => {
+        if (livePosition) {
+            setRecenterTick(t => t + 1);
+            return;
+        }
+        if (!navigator.geolocation) {
+            setNavError('Live location is not supported by this browser.');
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setLivePosition({
+                    lat: pos.coords.latitude,
+                    lon: pos.coords.longitude,
+                    heading: pos.coords.heading ?? 0,
+                    accuracy: pos.coords.accuracy,
+                });
+                setRecenterTick(t => t + 1);
+            },
+            () => setNavError('Could not fetch your current location.'),
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+        );
+    }, [livePosition]);
+
     // Stable callback — reads origin/destination via refs to avoid
     // giving useMapEvents a new function ref on every click (React #310).
     const handleMapClick = useCallback((latlng) => {
@@ -489,6 +635,14 @@ export default function App() {
                     loadingIncidents={loadingIncidents}
                     loading={loading} onMapClick={handleMapClick}
                     onBoundsChange={handleBoundsChange}
+                    navigating={navigating}
+                    livePosition={livePosition}
+                    currentStep={currentStep}
+                    navError={navError}
+                    recenterTick={recenterTick}
+                    onStartJourney={startJourney}
+                    onStopJourney={stopJourney}
+                    onRecenter={handleRecenter}
                 />
             </div>
         </div>

@@ -227,6 +227,128 @@ def _orient_edge_coords(coords: list, from_node: int, to_node: int, nodes: dict)
 
     return coords if dist2(coords[0], from_ll) <= dist2(coords[-1], from_ll) else list(reversed(coords))
 
+def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compass bearing (0-360, 0=North, clockwise) from point 1 to point 2."""
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dlon = math.radians(lon2 - lon1)
+    x = math.sin(dlon) * math.cos(phi2)
+    y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlon)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+
+def _compass_direction(bearing_deg: float) -> str:
+    dirs = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"]
+    return dirs[round(bearing_deg / 45) % 8]
+
+
+def _turn_angle(bearing_in: float, bearing_out: float) -> float:
+    """Signed turn angle in (-180, 180]. Positive = right turn, negative = left."""
+    return ((bearing_out - bearing_in + 540) % 360) - 180
+
+
+def _maneuver_for_angle(angle: float) -> tuple[str, str]:
+    """Returns (maneuver_code, human_verb) for a signed turn angle."""
+    a = abs(angle)
+    if a < 12:
+        return "straight", "Continue straight"
+    if a < 45:
+        return ("slight_right", "Bear right") if angle > 0 else ("slight_left", "Bear left")
+    if a < 135:
+        return ("right", "Turn right") if angle > 0 else ("left", "Turn left")
+    return "uturn", "Make a U-turn"
+
+
+def _first_bearing(coords: list) -> Optional[float]:
+    """Bearing of the first real movement in a [lon, lat] coordinate list."""
+    for i in range(len(coords) - 1):
+        (lon1, lat1), (lon2, lat2) = coords[i], coords[i + 1]
+        if (lon1, lat1) != (lon2, lat2):
+            return _bearing(lat1, lon1, lat2, lon2)
+    return None
+
+
+def _last_bearing(coords: list) -> Optional[float]:
+    """Bearing of the last real movement in a [lon, lat] coordinate list."""
+    for i in range(len(coords) - 1, 0, -1):
+        (lon1, lat1), (lon2, lat2) = coords[i - 1], coords[i]
+        if (lon1, lat1) != (lon2, lat2):
+            return _bearing(lat1, lon1, lat2, lon2)
+    return None
+
+
+def generate_turn_instructions(segments: list) -> list:
+    """
+    Build Google-Maps-style turn-by-turn steps from a route's ordered
+    SegmentInfo list.
+
+    Consecutive segments sharing the same road_name are merged into one
+    step (otherwise you'd get a new instruction at every single OSM
+    intersection along a straight arterial road, which is not what a
+    navigation UI wants). A new instruction is emitted at each road-name
+    change, describing the turn based on the actual bearing change
+    between the end of the previous step and the start of the next —
+    not just "a turn happened", but left/right/straight/U-turn with a
+    real angle behind the classification.
+    """
+    if not segments:
+        return []
+
+    # ── Merge into road-name runs ───────────────────────────────────
+    steps = []
+    for seg in segments:
+        coords = seg.geometry.get("coordinates", [])
+        if steps and steps[-1]["road_name"] == seg.road_name:
+            steps[-1]["coords"].extend(coords[1:] if steps[-1]["coords"] else coords)
+            steps[-1]["distance_m"] += seg.length_m
+            steps[-1]["travel_time_s"] += seg.travel_time_s
+        else:
+            steps.append({
+                "road_name": seg.road_name,
+                "coords": list(coords),
+                "distance_m": seg.length_m,
+                "travel_time_s": seg.travel_time_s,
+            })
+
+    # ── Emit instructions at each step ──────────────────────────────
+    instructions = []
+    for i, step in enumerate(steps):
+        name = step["road_name"] or "the road"
+        entry_bearing = _first_bearing(step["coords"])
+        start_lon, start_lat = (step["coords"][0] if step["coords"] else (None, None))
+
+        if i == 0:
+            heading = _compass_direction(entry_bearing) if entry_bearing is not None else None
+            text = f"Head {heading} on {name}" if heading else f"Head on {name}"
+            maneuver = "depart"
+        else:
+            prev_bearing = _last_bearing(steps[i - 1]["coords"])
+            if prev_bearing is not None and entry_bearing is not None:
+                angle = _turn_angle(prev_bearing, entry_bearing)
+                maneuver, verb = _maneuver_for_angle(angle)
+            else:
+                maneuver, verb = "straight", "Continue"
+            text = f"{verb} onto {name}" if maneuver != "straight" else f"Continue onto {name}"
+
+        instructions.append({
+            "maneuver": maneuver,
+            "instruction": text,
+            "road_name": step["road_name"],
+            "distance_m": round(step["distance_m"], 1),
+            "travel_time_s": round(step["travel_time_s"], 1),
+            "location": {"lat": start_lat, "lon": start_lon} if start_lat is not None else None,
+        })
+
+    instructions.append({
+        "maneuver": "arrive",
+        "instruction": "Arrive at your destination",
+        "road_name": None,
+        "distance_m": 0.0,
+        "travel_time_s": 0.0,
+        "location": None,
+    })
+    return instructions
+
+
 async def find_route(
     origin_lat: float,
     origin_lon: float,
@@ -386,4 +508,5 @@ async def find_route(
         geometry={"type": "LineString", "coordinates": all_coords},
         segments=segments,
         weights_used={"alpha": alpha, "beta": beta, "gamma": gamma},
+        instructions=generate_turn_instructions(segments),
     )

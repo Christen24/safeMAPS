@@ -1100,6 +1100,150 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   letter-spacing: 0;
 }
 
+/* --- My Location recenter button ------------------------------- */
+.recenter-btn {
+  position: absolute;
+  bottom: 96px;
+  right: 12px;
+  z-index: 1000;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: var(--ease-snap);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.recenter-btn:hover {
+  background: var(--surface-3);
+  border-color: var(--ice-dim);
+  transform: scale(1.05);
+}
+
+.recenter-btn:active {
+  transform: scale(0.96);
+}
+
+/* --- Start Journey button ---------------------------------------- */
+.start-journey-btn {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 12px 28px;
+  background: var(--acid);
+  color: var(--void);
+  border: none;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: var(--acid-glow), 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: var(--ease-snap);
+}
+
+.start-journey-btn:hover {
+  background: var(--acid-dim);
+  transform: translateX(-50%) scale(1.03);
+}
+
+/* --- Turn-by-turn instruction panel ------------------------------ */
+.nav-instruction-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-med);
+  border-radius: var(--r-lg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.nav-instruction-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.nav-maneuver-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--ice-mute);
+  color: var(--ice);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.nav-instruction-text {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-instruction-distance {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.nav-error-text {
+  margin: 0;
+  color: var(--infra);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.end-journey-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  background: var(--infra-mute);
+  color: var(--infra);
+  border: 1px solid var(--infra-dim);
+  border-radius: var(--r-md);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: var(--ease-snap);
+}
+
+.end-journey-btn:hover {
+  background: var(--infra);
+  color: var(--void);
+}
+
 /* Incident legend in map overlay */
 .incident-legend {
   position: absolute;

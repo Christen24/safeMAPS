@@ -72,6 +72,40 @@ function makeTriangleIcon(color) {
     });
 }
 
+// ── Live-position navigation arrow — rotates to heading ────────
+function makeArrowIcon(heading) {
+    return L.divIcon({
+        className: '',
+        html: `
+          <div style="transform: rotate(${heading}deg); transform-origin: 50% 50%;">
+            <svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="17" cy="17" r="15" fill="#4fc3e0" fill-opacity="0.15"/>
+              <polygon points="17,4 25,26 17,21 9,26" fill="#4fc3e0"
+                       stroke="#0d1322" stroke-width="1.5"/>
+            </svg>
+          </div>`,
+        iconSize:   [34, 34],
+        iconAnchor: [17, 17],
+    });
+}
+
+// ── Turn-instruction display helpers ────────────────────────────
+const MANEUVER_ICONS = {
+    depart: '↑',
+    straight: '↑',
+    slight_left: '↖',
+    slight_right: '↗',
+    left: '←',
+    right: '→',
+    uturn: '↩',
+    arrive: '⚑',
+};
+
+function formatDistance(m) {
+    if (m < 1000) return `${Math.round(m / 10) * 10} m`;
+    return `${(m / 1000).toFixed(1)} km`;
+}
+
 // ── Profile colours ───────────────────────────────────────────
 const PROFILE_COLORS = {
     balanced: '#9b87e8',
@@ -165,6 +199,41 @@ function FitBounds({ route }) {
     return null;
 }
 
+// ── Live position: arrow marker + auto-follow / recenter ───────
+// - While `navigating`, the map pans to keep the arrow centered on every
+//   position update ("follow me" behaviour).
+// - `recenterTick` is a counter bumped by the "My Location" button —
+//   incrementing it (even with no other state change) re-triggers the
+//   pan, which is why it's in the effect's dependency array despite not
+//   being read inside it.
+function LiveLocationMarker({ position, navigating, recenterTick }) {
+    const map = useMap();
+
+    useEffect(() => {
+        if (!position) return;
+        if (navigating) {
+            map.panTo([position.lat, position.lon], { animate: true, duration: 0.4 });
+        }
+    }, [position, navigating, map]);
+
+    useEffect(() => {
+        if (recenterTick > 0 && position) {
+            map.setView([position.lat, position.lon], Math.max(map.getZoom(), 16), { animate: true });
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [recenterTick]);
+
+    if (!position) return null;
+
+    return (
+        <Marker
+            position={[position.lat, position.lon]}
+            icon={makeArrowIcon(position.heading || 0)}
+            zIndexOffset={1000}
+        />
+    );
+}
+
 // ── Selected route — segment-coloured or flat ─────────────────
 function SelectedRoute({ route }) {
     const hasSegments = route?.segments?.length > 0;
@@ -230,6 +299,8 @@ export default function MapView({
     loadingIncidents,
     loading, onMapClick, onBoundsChange,
     pickingDestOnMap,       // when true: crosshair cursor + overlay hint
+    navigating, livePosition, currentStep, navError, recenterTick,
+    onStartJourney, onStopJourney, onRecenter,
 }) {
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
@@ -264,6 +335,11 @@ export default function MapView({
 
                 <MapEvents onMapClick={onMapClick} onBoundsChange={onBoundsChange} />
                 {selectedRoute && <FitBounds route={selectedRoute} />}
+                <LiveLocationMarker
+                    position={livePosition}
+                    navigating={navigating}
+                    recenterTick={recenterTick}
+                />
 
                 {/* Loaded road-network coverage boundary — clicks outside
                     this (or within ~500m of its edge) won't find a road. */}
@@ -453,6 +529,59 @@ export default function MapView({
                     )}
                 </button>
             </div>
+
+            {/* ── My Location (Google-Maps-style recenter) ── */}
+            <button
+                className="recenter-btn"
+                onClick={onRecenter}
+                title="Center on my location"
+                aria-label="Center on my location"
+            >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="10" cy="10" r="3" fill="#4fc3e0" />
+                    <circle cx="10" cy="10" r="7" stroke="#4fc3e0" strokeWidth="1.5" fill="none" />
+                    <line x1="10" y1="0"  x2="10" y2="4"  stroke="#4fc3e0" strokeWidth="1.5" />
+                    <line x1="10" y1="16" x2="10" y2="20" stroke="#4fc3e0" strokeWidth="1.5" />
+                    <line x1="0"  y1="10" x2="4"  y2="10" stroke="#4fc3e0" strokeWidth="1.5" />
+                    <line x1="16" y1="10" x2="20" y2="10" stroke="#4fc3e0" strokeWidth="1.5" />
+                </svg>
+            </button>
+
+            {/* ── Journey controls ── */}
+            {!navigating && selectedRoute && (
+                <button className="start-journey-btn" onClick={onStartJourney}>
+                    ▶ Start Journey
+                </button>
+            )}
+
+            {navigating && (
+                <div className="nav-instruction-panel">
+                    {navError ? (
+                        <p className="nav-error-text">⚠ {navError}</p>
+                    ) : selectedRoute?.instructions?.[currentStep] ? (
+                        <>
+                            <div className="nav-instruction-main">
+                                <span className="nav-maneuver-icon">
+                                    {MANEUVER_ICONS[selectedRoute.instructions[currentStep].maneuver] || '↑'}
+                                </span>
+                                <div>
+                                    <p className="nav-instruction-text">
+                                        {selectedRoute.instructions[currentStep].instruction}
+                                    </p>
+                                    {selectedRoute.instructions[currentStep].distance_m > 0 && (
+                                        <p className="nav-instruction-distance">
+                                            {formatDistance(selectedRoute.instructions[currentStep].distance_m)}
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <p className="nav-instruction-text">Tracking your location…</p>
+                    )}
+                    <button className="end-journey-btn" onClick={onStopJourney}>✕ End</button>
+                </div>
+            )}
 
             {/* ── AQI legend ── */}
             {showAQI && (

@@ -72,6 +72,16 @@ class SegmentInfo(BaseModel):
     geometry: dict  # GeoJSON LineString
 
 
+class TurnInstruction(BaseModel):
+    """A single turn-by-turn navigation step."""
+    maneuver: str            # depart | straight | slight_left | slight_right | left | right | uturn | arrive
+    instruction: str         # human-readable text, e.g. "Turn left onto MG Road"
+    road_name: Optional[str] = None
+    distance_m: float        # distance to travel on this step before the next instruction
+    travel_time_s: float
+    location: Optional[dict] = None   # {"lat": ..., "lon": ...} — start point of this step
+
+
 class RouteResponse(BaseModel):
     """Response from the routing endpoint."""
     route_id: str
@@ -80,6 +90,7 @@ class RouteResponse(BaseModel):
     geometry: dict  # GeoJSON LineString (full route)
     segments: list[SegmentInfo]
     weights_used: dict  # {"alpha": ..., "beta": ..., "gamma": ...}
+    instructions: list[TurnInstruction] = []
 
 
 class CompareRoutesResponse(BaseModel):
