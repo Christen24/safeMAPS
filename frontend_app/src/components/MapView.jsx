@@ -124,8 +124,18 @@ export function aqiColor(aqi) {
     return '#7b1fa2';                   // Hazardous — deep purple
 }
 
-// ── Segment colour runs ───────────────────────────────────────
-function buildColoredSegments(segments) {
+// ── Traffic congestion colour scale ───────────────────────────
+// congestion: 0.0 = free-flowing (green), 1.0 = gridlock (red)
+export function trafficColor(congestion) {
+    if (congestion <= 0.15) return '#4ecb8d';  // Free-flowing — green
+    if (congestion <= 0.35) return '#a8d96a';  // Light — yellow-green
+    if (congestion <= 0.55) return '#f0a93e';  // Moderate — amber
+    if (congestion <= 0.75) return '#f97316';  // Heavy — orange
+    return '#f16565';                          // Severe — red
+}
+
+// ── Generic segment colour-run builder ────────────────────────
+function buildColorRuns(segments, colorFn) {
     if (!segments || segments.length === 0) return [];
 
     const runs = [];
@@ -136,7 +146,7 @@ function buildColoredSegments(segments) {
         const coords = seg.geometry?.coordinates;
         if (!coords || coords.length === 0) continue;
 
-        const color = aqiColor(seg.aqi_value);
+        const color = colorFn(seg);
 
         if (color !== currentColor) {
             if (currentCoords.length > 0) {
@@ -160,6 +170,17 @@ function buildColoredSegments(segments) {
 
     return runs;
 }
+
+// AQI-coloured run builder (existing behaviour)
+function buildColoredSegments(segments) {
+    return buildColorRuns(segments, seg => aqiColor(seg.aqi_value));
+}
+
+// Traffic-coloured run builder
+function buildTrafficColoredSegments(segments) {
+    return buildColorRuns(segments, seg => trafficColor(seg.congestion ?? 0));
+}
+
 
 // ── Debounced map events ──────────────────────────────────────
 function MapEvents({ onMapClick, onBoundsChange }) {
@@ -235,11 +256,13 @@ function LiveLocationMarker({ position, navigating, recenterTick }) {
 }
 
 // ── Selected route — segment-coloured or flat ─────────────────
-function SelectedRoute({ route }) {
+function SelectedRoute({ route, colorMode }) {
     const hasSegments = route?.segments?.length > 0;
 
     if (hasSegments) {
-        const runs = buildColoredSegments(route.segments);
+        const runs = colorMode === 'traffic'
+            ? buildTrafficColoredSegments(route.segments)
+            : buildColoredSegments(route.segments);
         return (
             <>
                 {runs.map((run, i) => (
@@ -302,6 +325,7 @@ export default function MapView({
     navigating, livePosition, currentStep, navError, recenterTick,
     onStartJourney, onStopJourney, onRecenter,
 }) {
+    const [colorMode, setColorMode] = React.useState('aqi'); // 'aqi' | 'traffic'
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
 
@@ -412,8 +436,8 @@ export default function MapView({
                         />
                     ))}
 
-                {/* Selected route — AQI-coloured segments */}
-                {selectedRoute && <SelectedRoute route={selectedRoute} />}
+                {/* Selected route — coloured by AQI or traffic */}
+                {selectedRoute && <SelectedRoute route={selectedRoute} colorMode={colorMode} />}
 
                 {/* AQI heatmap — zoom-aware radius, stable keys, satellite contrast */}
                 {showAQI && <AQIHeatmapLayer aqiData={aqiData} />}
@@ -528,6 +552,16 @@ export default function MapView({
                         <span className="incident-badge">{incidentData.total}</span>
                     )}
                 </button>
+                {/* Route line colour-mode toggle — only show when a route is selected */}
+                {selectedRoute && (
+                    <button
+                        className={`map-control-btn color-mode-btn ${colorMode === 'traffic' ? 'active' : ''}`}
+                        onClick={() => setColorMode(m => m === 'aqi' ? 'traffic' : 'aqi')}
+                        title={colorMode === 'aqi' ? 'Switch to traffic density colouring' : 'Switch to AQI colouring'}
+                    >
+                        {colorMode === 'aqi' ? '🟡 Show Traffic' : '🌫️ Show AQI'}
+                    </button>
+                )}
             </div>
 
             {/* ── My Location (Google-Maps-style recenter) ── */}
@@ -583,25 +617,48 @@ export default function MapView({
                 </div>
             )}
 
-            {/* ── AQI legend ── */}
-            {showAQI && (
+            {/* ── Legend — updates based on active colour mode ── */}
+            {(showAQI || (selectedRoute && colorMode === 'traffic')) && (
                 <div className="aqi-legend">
-                    <h4>AQI Scale</h4>
-                    <div className="legend-items">
-                        {[
-                            ['#4ecb8d', '0–50 Good'],
-                            ['#f0a93e', '51–100 Moderate'],
-                            ['#ff8c00', '101–150 USG'],
-                            ['#f16565', '151–200 Unhealthy'],
-                            ['#9b87e8', '200+ Hazardous'],
-                        ].map(([c, l]) => (
-                            <div className="legend-item" key={l}>
-                                <div className="legend-swatch" style={{ background: c }} />
-                                {l}
+                    {colorMode === 'traffic' && selectedRoute ? (
+                        <>
+                            <h4>Traffic Density</h4>
+                            <div className="legend-items">
+                                {[
+                                    ['#4ecb8d', 'Free-flowing'],
+                                    ['#a8d96a', 'Light'],
+                                    ['#f0a93e', 'Moderate'],
+                                    ['#f97316', 'Heavy'],
+                                    ['#f16565', 'Severe'],
+                                ].map(([c, l]) => (
+                                    <div className="legend-item" key={l}>
+                                        <div className="legend-swatch" style={{ background: c }} />
+                                        {l}
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
-                    <p className="legend-note">Route line colour = AQI per segment</p>
+                            <p className="legend-note">Route line colour = live traffic speed</p>
+                        </>
+                    ) : (
+                        <>
+                            <h4>AQI Scale</h4>
+                            <div className="legend-items">
+                                {[
+                                    ['#4ecb8d', '0–50 Good'],
+                                    ['#f0a93e', '51–100 Moderate'],
+                                    ['#ff8c00', '101–150 USG'],
+                                    ['#f16565', '151–200 Unhealthy'],
+                                    ['#9b87e8', '200+ Hazardous'],
+                                ].map(([c, l]) => (
+                                    <div className="legend-item" key={l}>
+                                        <div className="legend-swatch" style={{ background: c }} />
+                                        {l}
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="legend-note">Route line colour = AQI per segment</p>
+                        </>
+                    )}
                 </div>
             )}
 

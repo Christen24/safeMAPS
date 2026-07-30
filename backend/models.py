@@ -70,6 +70,7 @@ class SegmentInfo(BaseModel):
     risk_score: float
     segment_cost: float
     geometry: dict  # GeoJSON LineString
+    congestion: float = 0.0  # 0.0 = free-flowing, 1.0 = gridlock (from TomTom)
 
 
 class TurnInstruction(BaseModel):

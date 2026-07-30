@@ -460,6 +460,8 @@ async def find_route(
                     # twice in the geometry, causing polyline kinks on the map.
                     all_coords.extend(coords[1:])
 
+        congestion = graph_cache.get_congestion(eid)
+
         segments.append(SegmentInfo(
             edge_id=eid,
             road_name=ed.get("road_name"),
@@ -469,6 +471,7 @@ async def find_route(
             risk_score=risk_val,
             segment_cost=seg_cost,
             geometry=geom,
+            congestion=congestion,
         ))
 
         total_time += travel_time_s

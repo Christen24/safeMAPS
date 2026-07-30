@@ -181,6 +181,7 @@ class GraphCache:
                 "geometry": geom,
                 "length_m": length_m,
                 "speed_kmh": speed_kmh,
+                "base_speed_kmh": speed_kmh,   # OSM free-flow speed — never overwritten
                 "road_name": row["road_name"],
                 "road_type": row["road_type"],
             }
@@ -478,6 +479,23 @@ class GraphCache:
     def get_incident(self, edge_id: int) -> float:
         """Return live incident cost for an edge, defaulting to 0."""
         return self.edge_incident.get(edge_id, 0.0)
+
+    def get_congestion(self, edge_id: int) -> float:
+        """
+        Return congestion ratio for an edge: 0.0 = free-flowing, 1.0 = gridlock.
+        Computed as 1 - (current_speed / base_speed). base_speed is the OSM
+        free-flow speed captured at graph load time and never overwritten by
+        the TomTom scraper, so this ratio reflects real degradation.
+        Returns 0.0 (free-flowing) for edges with no traffic data yet.
+        """
+        ed = self.edge_data.get(edge_id)
+        if not ed:
+            return 0.0
+        base = ed.get("base_speed_kmh", 0)
+        current = ed.get("speed_kmh", 0)
+        if base <= 0:
+            return 0.0
+        return max(0.0, min(1.0, 1.0 - current / base))
 
 
 # Module-level singleton — import this everywhere
