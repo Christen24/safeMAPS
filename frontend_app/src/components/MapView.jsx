@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import {
     MapContainer, TileLayer, Polyline, Marker,
     Popup, CircleMarker, Rectangle, useMapEvents, useMap,
@@ -325,7 +325,7 @@ export default function MapView({
     navigating, livePosition, currentStep, navError, recenterTick,
     onStartJourney, onStopJourney, onRecenter,
 }) {
-    const [colorMode, setColorMode] = React.useState('aqi'); // 'aqi' | 'traffic'
+    const [colorMode, setColorMode] = useState('traffic'); // 'traffic' | 'aqi'
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
 
