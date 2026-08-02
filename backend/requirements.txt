@@ -20,4 +20,4 @@ apscheduler>=3.10.0
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 # MCP server (mcp_server.py) — exposes routing/AQI/risk as MCP tools
-mcp>=1.2.0
+mcp>=1.2.0,<2.0.0

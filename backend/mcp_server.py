@@ -31,12 +31,16 @@ This server is READ-ONLY. No tool mutates any state.
 """
 
 import math
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+from fastapi import HTTPException
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from database import db
 from graph_cache import graph_cache
@@ -69,9 +73,18 @@ async def lifespan(server):
 mcp = FastMCP(
     "SafeMAPS",
     lifespan=lifespan,
+    host="0.0.0.0",
+    port=int(os.getenv("MCP_PORT", "8001")),
     # Streamable-HTTP transport — reachable at /mcp
-    # (FastMCP routes this automatically when run() is called with host/port)
 )
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    """Plain health check for Docker/Railway — the /mcp endpoint itself
+    requires a properly-initialized MCP session and returns 406/400 for
+    a bare GET, so it can't be used as the healthcheck target directly."""
+    return JSONResponse({"status": "ok", "graph_loaded": graph_cache.is_loaded})
 
 
 # ── Shared helpers ──────────────────────────────────────────────────────
@@ -108,6 +121,18 @@ async def _ensure_ready() -> Optional[str]:
     return None
 
 
+def _safe_parse_hour(departure_time: Optional[str]) -> tuple[Optional[int], Optional[str]]:
+    """Wraps _parse_hour (reused from routes/route.py), which raises
+    fastapi.HTTPException on malformed input — fine inside a FastAPI request,
+    but that would otherwise escape as an unhandled exception from an MCP
+    tool instead of the {"error": ...} shape every other validation failure
+    in this file returns. Returns (hour, error_message)."""
+    try:
+        return _parse_hour(departure_time), None
+    except HTTPException as exc:
+        return None, str(exc.detail)
+
+
 # ── Tools ────────────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -138,7 +163,9 @@ async def get_safe_route(
         return {"error": f"Unknown profile '{profile}'. Use fastest, safest, healthiest, or balanced."}
 
     alpha, beta, gamma = get_profile_weights(route_profile)
-    hour = _parse_hour(departure_time)
+    hour, hour_err = _safe_parse_hour(departure_time)
+    if hour_err:
+        return {"error": hour_err}
 
     route = await find_route(
         origin_lat=origin_lat, origin_lon=origin_lon,
@@ -170,7 +197,9 @@ async def compare_route_profiles(
         return {"error": err}
 
     import asyncio
-    hour = _parse_hour(departure_time)
+    hour, hour_err = _safe_parse_hour(departure_time)
+    if hour_err:
+        return {"error": hour_err}
 
     results = await asyncio.gather(*[
         find_route(
@@ -441,7 +470,6 @@ async def predict_aqi_near(
 # ── Entry point ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import os
-    port = int(os.getenv("MCP_PORT", "8001"))
-    # streamable-http transport — reachable at http://<host>:<port>/mcp
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
+    # host/port are set on the FastMCP constructor above — run() only
+    # accepts `transport` (and `mount_path` for sse).
+    mcp.run(transport="streamable-http")
