@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import {
     MapContainer, TileLayer, Polyline, Marker,
-    Popup, CircleMarker, Rectangle, useMapEvents, useMap,
+    Popup, CircleMarker, Rectangle, ScaleControl, useMapEvents, useMap,
 } from 'react-leaflet';
 
 import AQIHeatmapLayer from './AQIHeatmapLayer';
@@ -27,11 +27,18 @@ const NETWORK_BOUNDS = [
 ];
 
 // ── Custom markers — tactical crosshair style ─────────────────
-function makeIcon(ring, fill) {
+// Extra 10px of canvas below the crosshair holds a soft ground shadow so
+// the marker reads as "planted" on the map (same cue Google/Apple pins use
+// via their teardrop point) — without giving up the reticle identity.
+// The viewBox grew but the crosshair itself is untouched at (11,11), and
+// iconAnchor stays [11,11] so the actual lat/lng point doesn't shift.
+function makeIcon(ring, fill, { pulse = false } = {}) {
     return L.divIcon({
         className: '',
         html: `
-          <svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+          <svg width="22" height="32" viewBox="0 0 22 32" xmlns="http://www.w3.org/2000/svg">
+            <ellipse cx="11" cy="26" rx="5.5" ry="2" fill="#03050a" opacity="0.4"/>
+            ${pulse ? `<circle class="sm-origin-pulse" cx="11" cy="11" r="9" fill="none" stroke="${ring}" stroke-width="1.5"/>` : ''}
             <circle cx="11" cy="11" r="9" fill="none" stroke="${ring}" stroke-width="1.5" opacity="0.4"/>
             <circle cx="11" cy="11" r="4"  fill="${fill}" />
             <line x1="11" y1="2"  x2="11" y2="6"  stroke="${ring}" stroke-width="1" opacity="0.5"/>
@@ -39,12 +46,12 @@ function makeIcon(ring, fill) {
             <line x1="2"  y1="11" x2="6"  y2="11" stroke="${ring}" stroke-width="1" opacity="0.5"/>
             <line x1="16" y1="11" x2="20" y2="11" stroke="${ring}" stroke-width="1" opacity="0.5"/>
           </svg>`,
-        iconSize: [22, 22],
+        iconSize: [22, 32],
         iconAnchor: [11, 11],
     });
 }
 
-const originIcon = makeIcon('#4ecb8d', '#4ecb8d');
+const originIcon = makeIcon('#4ecb8d', '#4ecb8d', { pulse: true });
 const destIcon = makeIcon('#f16565', '#f16565');
 
 // ── Incident triangle icons ───────────────────────────────────
@@ -55,6 +62,17 @@ const INCIDENT_COLORS = {
     waterlogging: '#3b82f6',
     construction: '#f59e0b',
     hazard: '#eab308',
+};
+
+// ── Blackspot severity colors — matches index.css Monsoon Ledger vars ──
+// (--acid / --amber / --infra / --infra-dim). Hardcoded because Leaflet
+// pathOptions are SVG presentation attributes, not CSS, so var() won't
+// resolve here — same convention the destIcon color above already uses.
+const SEVERITY_COLORS = {
+    low:      '#4ecb8d', // --acid
+    moderate: '#f0a93e', // --amber
+    high:     '#f16565', // --infra
+    critical: '#c94545', // --infra-dim
 };
 
 function makeTriangleIcon(color) {
@@ -77,9 +95,13 @@ function makeArrowIcon(heading) {
     return L.divIcon({
         className: '',
         html: `
-          <div style="transform: rotate(${heading}deg); transform-origin: 50% 50%;">
-            <svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">
+          <div style="position:relative; width:34px; height:34px;">
+            <svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg" style="position:absolute; inset:0;">
+              <circle class="sm-live-pulse-ring" cx="17" cy="17" r="10" fill="none" stroke="#4fc3e0" stroke-width="1.5"/>
               <circle cx="17" cy="17" r="15" fill="#4fc3e0" fill-opacity="0.15"/>
+            </svg>
+            <svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg"
+                 style="position:absolute; inset:0; transform: rotate(${heading}deg); transform-origin: 50% 50%;">
               <polygon points="17,4 25,26 17,21 9,26" fill="#4fc3e0"
                        stroke="#0d1322" stroke-width="1.5"/>
             </svg>
@@ -255,54 +277,87 @@ function LiveLocationMarker({ position, navigating, recenterTick }) {
     );
 }
 
-// ── Selected route — segment-coloured or flat ─────────────────
+// ── Zoom-aware line weight — routes thicken on zoom-in ─────────
+// Mirrors Google/Apple Maps: the route reads as a thin ribbon at city
+// zoom and a bold highway-shield stroke once you're in close.
+function useZoomLevel() {
+    const map = useMap();
+    const [zoom, setZoom] = useState(() => map.getZoom());
+    useMapEvents({
+        zoom:    () => setZoom(map.getZoom()),
+        zoomend: () => setZoom(map.getZoom()),
+    });
+    return zoom;
+}
+
+function routeWeights(zoom) {
+    if (zoom >= 16) return { shadow: 12.5, casing: 10.5, fill: 6.5, flow: 3   };
+    if (zoom >= 14) return { shadow: 10.5, casing: 9,    fill: 5.5, flow: 2.6 };
+    if (zoom >= 12) return { shadow: 9,    casing: 7.5,  fill: 4.5, flow: 2.2 };
+    return              { shadow: 7.5,  casing: 6.5,  fill: 4,   flow: 2   };
+}
+
+// ── Selected route — the "cut-line" treatment ──────────────────
+// Four stacked passes instead of one flat stroke, closest to how
+// Google/Apple/Uber actually draw a route over satellite imagery:
+//   1. shadow  — soft dark halo, reads as elevation off the basemap
+//   2. casing  — off-white seam, the contrast edge that cuts through
+//                photographic satellite tiles (this is what a flat
+//                colour line was missing)
+//   3. fill    — the real signal: AQI / traffic / profile colour,
+//                per coloured run
+//   4. flow    — animated ticks of light drifting origin → destination
+// Shadow/casing/flow always use the FULL route geometry (present even
+// on mock/offline routes with no `segments`), so demo mode gets the
+// same treatment as a live-backend route — that's the case that was
+// showing the flat green line.
 function SelectedRoute({ route, colorMode }) {
+    const zoom = useZoomLevel();
+    const w = routeWeights(zoom);
     const hasSegments = route?.segments?.length > 0;
 
-    if (hasSegments) {
-        const runs = colorMode === 'traffic'
-            ? buildTrafficColoredSegments(route.segments)
-            : buildColoredSegments(route.segments);
-        return (
-            <>
-                {runs.map((run, i) => (
-                    <Polyline
-                        key={`run-${i}`}
-                        positions={run.coords}
-                        pathOptions={{
-                            color: run.color,
-                            weight: 5,
-                            opacity: 0.9,
-                            lineCap: 'round',
-                            lineJoin: 'round',
-                        }}
-                    />
-                ))}
-                {/* Glow pass — slightly wider, more transparent */}
-                {runs.map((run, i) => (
-                    <Polyline
-                        key={`glow-${i}`}
-                        positions={run.coords}
-                        pathOptions={{
-                            color: run.color,
-                            weight: 10,
-                            opacity: 0.12,
-                            lineCap: 'round',
-                            lineJoin: 'round',
-                        }}
-                    />
-                ))}
-            </>
-        );
-    }
+    const fullCoords = route?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
+    if (fullCoords.length < 2) return null;
 
-    // Fallback — mock routes with no segment data
-    const coords = route?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
-    const color = PROFILE_COLORS[route.profile] || '#4ecb8d';
+    const runs = hasSegments
+        ? (colorMode === 'traffic' ? buildTrafficColoredSegments(route.segments) : buildColoredSegments(route.segments))
+        : [{ color: PROFILE_COLORS[route.profile] || '#4ecb8d', coords: fullCoords }];
+
     return (
         <>
-            <Polyline positions={coords} pathOptions={{ color, weight: 5, opacity: 0.9, lineCap: 'round' }} />
-            <Polyline positions={coords} pathOptions={{ color, weight: 12, opacity: 0.1, lineCap: 'round' }} />
+            <Polyline
+                positions={fullCoords}
+                pathOptions={{
+                    className: 'sm-route-shadow',
+                    color: '#03050a', weight: w.shadow, opacity: 0.38,
+                    lineCap: 'round', lineJoin: 'round', interactive: false,
+                }}
+            />
+            <Polyline
+                positions={fullCoords}
+                pathOptions={{
+                    color: '#eef1fb', weight: w.casing, opacity: 0.92,
+                    lineCap: 'round', lineJoin: 'round', interactive: false,
+                }}
+            />
+            {runs.map((run, i) => (
+                <Polyline
+                    key={`fill-${i}`}
+                    positions={run.coords}
+                    pathOptions={{
+                        color: run.color, weight: w.fill, opacity: 0.98,
+                        lineCap: 'round', lineJoin: 'round',
+                    }}
+                />
+            ))}
+            <Polyline
+                positions={fullCoords}
+                pathOptions={{
+                    className: 'sm-route-flow',
+                    color: '#ffffff', weight: w.flow, opacity: 0.75,
+                    dashArray: '2 16', lineCap: 'round', interactive: false,
+                }}
+            />
         </>
     );
 }
@@ -323,9 +378,10 @@ export default function MapView({
     loading, onMapClick, onBoundsChange,
     pickingDestOnMap,       // when true: crosshair cursor + overlay hint
     navigating, livePosition, currentStep, navError, recenterTick,
-    onStartJourney, onStopJourney, onRecenter,
+    onStartJourney, onStopJourney, onRecenter, onSelectRoute,
 }) {
     const [colorMode, setColorMode] = useState('traffic'); // 'traffic' | 'aqi'
+    const [hoveredGhostId, setHoveredGhostId] = useState(null);
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
 
@@ -356,6 +412,9 @@ export default function MapView({
                     maxZoom={19}
                     opacity={0.85}
                 />
+
+                {/* Metric scale bar — India uses metric throughout the rest of the UI */}
+                <ScaleControl position="bottomleft" imperial={false} maxWidth={120} />
 
                 <MapEvents onMapClick={onMapClick} onBoundsChange={onBoundsChange} />
                 {selectedRoute && <FitBounds route={selectedRoute} />}
@@ -420,21 +479,34 @@ export default function MapView({
                     </Marker>
                 )}
 
-                {/* Ghost routes — non-selected alternatives */}
+                {/* Ghost routes — non-selected alternatives. Neutral grey-blue
+                    (not the profile colour) so the coloured selected route is
+                    unambiguous at a glance — same convention Google Maps
+                    uses for alternates. Hover/click to swap the primary
+                    route, mirroring tap-to-switch behaviour there too. */}
                 {routes
                     .filter(r => r.route_id !== selectedRoute?.route_id)
-                    .map(r => (
-                        <Polyline
-                            key={r.route_id}
-                            positions={toLL(r)}
-                            pathOptions={{
-                                color: PROFILE_COLORS[r.profile] || '#b3bbd6',
-                                weight: 2,
-                                opacity: 0.18,
-                                dashArray: '6,5',
-                            }}
-                        />
-                    ))}
+                    .map(r => {
+                        const isHovered = hoveredGhostId === r.route_id;
+                        return (
+                            <Polyline
+                                key={r.route_id}
+                                positions={toLL(r)}
+                                pathOptions={{
+                                    color: isHovered ? '#aab4d9' : '#727ea8',
+                                    weight: isHovered ? 4.5 : 3,
+                                    opacity: isHovered ? 0.85 : 0.45,
+                                    dashArray: '1 7',
+                                    lineCap: 'round',
+                                }}
+                                eventHandlers={{
+                                    mouseover: () => setHoveredGhostId(r.route_id),
+                                    mouseout:  () => setHoveredGhostId(id => (id === r.route_id ? null : id)),
+                                    click:     () => onSelectRoute?.(r),
+                                }}
+                            />
+                        );
+                    })}
 
                 {/* Selected route — coloured by AQI or traffic */}
                 {selectedRoute && <SelectedRoute route={selectedRoute} colorMode={colorMode} />}
@@ -446,16 +518,26 @@ export default function MapView({
                 {showBlackspots && blackspotData?.features?.map((f, i) => {
                     const [lon, lat] = f.geometry.coordinates;
                     const p = f.properties;
-                    const r = Math.max(5, Math.min(p.total_accidents / 3, 14));
+                    // severity_weight is a normalized 0-10 scale regardless of data
+                    // source, so it stays meaningful whether a blackspot came from
+                    // the small built-in list (total_accidents ~10-45) or real BTP
+                    // station aggregates (total_accidents ~19-1787). Falling back to
+                    // the old total_accidents heuristic only if a record predates
+                    // the severity_weight column.
+                    const weight = p.severity_weight != null
+                        ? p.severity_weight
+                        : Math.min(p.total_accidents / 4.5, 10);
+                    const r = 5 + (weight / 10) * 11; // 5px (low) .. 16px (critical)
+                    const sevColor = SEVERITY_COLORS[p.severity] || SEVERITY_COLORS.moderate;
                     return (
                         <CircleMarker
                             key={`bs-${i}`}
                             center={[lat, lon]}
                             radius={r}
                             pathOptions={{
-                                color: '#f16565',
-                                fillColor: '#f16565',
-                                fillOpacity: 0.25,
+                                color: sevColor,
+                                fillColor: sevColor,
+                                fillOpacity: 0.28,
                                 weight: 1,
                             }}
                         >
@@ -473,7 +555,8 @@ export default function MapView({
                                         ⚠ BLACKSPOT
                                     </div>
                                     <div style={{ color: '#b3bbd6', fontSize: '10px' }}>
-                                        SEV: {p.severity?.toUpperCase()}<br />
+                                        SEV: {p.severity?.toUpperCase()}
+                                        {p.severity_weight != null && ` (${p.severity_weight.toFixed(1)}/10)`}<br />
                                         ACCIDENTS: {p.total_accidents} (FATAL: {p.fatal_accidents})
                                     </div>
                                     {p.description && (
@@ -552,8 +635,11 @@ export default function MapView({
                         <span className="incident-badge">{incidentData.total}</span>
                     )}
                 </button>
-                {/* Route line colour-mode toggle — only show when a route is selected */}
-                {selectedRoute && (
+                {/* Route line colour-mode toggle — only when the selected route
+                    actually has per-segment data. Bug fix: this used to show
+                    for mock/offline routes too, but those have no segments to
+                    recolour, so tapping it silently did nothing. */}
+                {selectedRoute?.segments?.length > 0 && (
                     <button
                         className={`map-control-btn color-mode-btn ${colorMode === 'traffic' ? 'active' : ''}`}
                         onClick={() => setColorMode(m => m === 'aqi' ? 'traffic' : 'aqi')}
@@ -618,9 +704,9 @@ export default function MapView({
             )}
 
             {/* ── Legend — updates based on active colour mode ── */}
-            {(showAQI || (selectedRoute && colorMode === 'traffic')) && (
+            {(showAQI || (selectedRoute?.segments?.length > 0 && colorMode === 'traffic')) && (
                 <div className="aqi-legend">
-                    {colorMode === 'traffic' && selectedRoute ? (
+                    {colorMode === 'traffic' && selectedRoute?.segments?.length > 0 ? (
                         <>
                             <h4>Traffic Density</h4>
                             <div className="legend-items">

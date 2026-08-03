@@ -1295,7 +1295,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 /* ─── AQI Legend ────────────────────────────────────────────── */
 .aqi-legend {
   position: absolute;
-  bottom: 16px;
+  bottom: 46px; /* clears the scale bar docked at bottom-left */
   left: 16px;
   z-index: 1000;
   background: var(--glass-bg);
@@ -1398,6 +1398,75 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 .leaflet-control-zoom a:hover {
   background: var(--surface-3) !important;
   color: var(--acid) !important;
+}
+
+/* ─── Route rendering — "cut-line" treatment ────────────────────
+   Layered polyline passes drawn in MapView's SelectedRoute:
+   shadow (blurred here) → off-white casing → coloured fill → this
+   flow pass, animated. See index.css design notes in MapView.jsx. */
+.sm-route-shadow {
+  filter: blur(3px);
+}
+
+.sm-route-flow {
+  animation: sm-route-flow 1.4s linear infinite;
+}
+
+@keyframes sm-route-flow {
+  to { stroke-dashoffset: -18; }
+}
+
+/* ─── Marker pulses — origin "you are here" ring, live nav arrow ─ */
+.sm-origin-pulse,
+.sm-live-pulse-ring {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: sm-pulse-ring 2.2s ease-out infinite;
+}
+
+.sm-live-pulse-ring {
+  animation-duration: 1.8s;
+}
+
+@keyframes sm-pulse-ring {
+  0%   { transform: scale(1);   opacity: 0.6; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sm-route-flow,
+  .sm-origin-pulse,
+  .sm-live-pulse-ring {
+    animation: none;
+  }
+  .sm-origin-pulse,
+  .sm-live-pulse-ring {
+    opacity: 0;
+  }
+}
+
+/* ─── Scale bar — themed to match the glass control system ─────── */
+.leaflet-control-scale-line {
+  background: var(--glass-bg) !important;
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-med) !important;
+  color: var(--text-secondary) !important;
+  text-shadow: none !important;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-radius: var(--r-xs);
+  padding: 2px 7px !important;
+}
+
+.leaflet-control-scale-line:not(:first-child) {
+  border-top: 1px solid var(--border-med) !important;
+}
+
+.leaflet-control-scale-line:not(:first-child):not(:last-child) {
+  border-bottom: 1px solid var(--border-med) !important;
 }
 
 /* ─── Scrollbar ─────────────────────────────────────────────── */
@@ -2197,6 +2266,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 .saved-save-row { margin-top: 4px; }
 
 .saved-save-btn {
+  display: inline-block;
   width: 100%;
   padding: 6px 10px;
   background: transparent;

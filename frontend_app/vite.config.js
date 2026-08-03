@@ -79,10 +79,13 @@ export default defineConfig({
         sourcemap: false,
         rollupOptions: {
             output: {
-                // Split large chunks for better caching
+                // Split the heavy leaflet/react-leaflet bundle out for better
+                // caching. (A separate 'react' split used to live here too,
+                // but Rollup was always inlining react/react-dom into
+                // whichever chunk imported them first, leaving this one an
+                // empty 0kB file that still cost a network round trip.)
                 manualChunks: {
                     leaflet: ['leaflet', 'react-leaflet'],
-                    react: ['react', 'react-dom'],
                 },
             },
         },

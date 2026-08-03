@@ -643,6 +643,7 @@ export default function App() {
                     onStartJourney={startJourney}
                     onStopJourney={stopJourney}
                     onRecenter={handleRecenter}
+                    onSelectRoute={setSelectedRoute}
                 />
             </div>
         </div>

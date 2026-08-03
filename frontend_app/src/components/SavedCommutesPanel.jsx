@@ -142,13 +142,23 @@ export default function SavedCommutesPanel({ origin, destination, profile, onLoa
                             <button className="saved-cancel-btn" onClick={() => setSaving(false)}>✕</button>
                         </div>
                     ) : (
-                        <button
-                            className={`saved-save-btn ${justSaved ? 'saved-just-saved' : ''}`}
-                            onClick={() => setSaving(true)}
-                        >
-                            {justSaved ? '✓ Saved!' : '+ Save this commute'}
+                        <button className="saved-save-btn" onClick={() => setSaving(true)}>
+                            + Save this commute
                         </button>
                     )}
+                </div>
+            )}
+
+            {/* Bug fix: this used to live inside the `canSave &&` block above,
+                but saving a commute makes it a duplicate of itself, so
+                canSave flips false on the very next render — the block
+                (and this confirmation with it) unmounted before it could
+                ever actually be seen. It's independent of canSave now. */}
+            {justSaved && (
+                <div className="saved-save-row">
+                    <span className="saved-save-btn saved-just-saved" role="status">
+                        ✓ Saved!
+                    </span>
                 </div>
             )}
         </div>
