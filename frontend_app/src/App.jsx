@@ -5,8 +5,8 @@ import LandingPage from './components/LandingPage';
 import GreenScore, { SESSION_ID } from './components/GreenScore';
 import PWAInstallPrompt from './components/PWAInstallPrompt';
 import { decodeURLToRoute, encodeRouteToURL, buildShareURL } from './utils/shareURL';
-import './index.css';
 import 'leaflet/dist/leaflet.css';
+import './index.css';
 
 const API_BASE = '/api';
 
