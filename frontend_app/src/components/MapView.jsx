@@ -441,6 +441,48 @@ export default function MapView({
                     }}
                 />
 
+                {/* Namma Metro — real BMRCL line colours, current operational
+                    network (3 lines, 85 stations, 2 interchanges). Rendered as
+                    background context (thin, ~0.8 opacity, no casing/shadow)
+                    and — importantly — before every marker/route below, so
+                    it's the bottom-most vector layer and never paints over
+                    the origin/destination pins or the routed path. */}
+                {showMetro && metroLines.map(({ line, color, stations }) => (
+                    <Polyline
+                        key={line}
+                        positions={stations.map(s => [s.lat, s.lon])}
+                        pathOptions={{
+                            color,
+                            weight: 3,
+                            opacity: 0.82,
+                            lineCap: 'round',
+                            lineJoin: 'round',
+                        }}
+                    />
+                ))}
+                {showMetro && metroStations.map(s => (
+                    <CircleMarker
+                        key={s.code}
+                        center={[s.lat, s.lon]}
+                        radius={s.interchange ? 5 : 3}
+                        pathOptions={{
+                            color: '#0b0f1a',
+                            weight: s.interchange ? 2 : 1.5,
+                            fillColor: s.interchange ? '#eef1fb' : METRO_LINE_COLORS[s.lines[0]],
+                            fillOpacity: 1,
+                        }}
+                    >
+                        <Tooltip direction="top" offset={[0, -4]} opacity={1}>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                                {s.name}
+                                {s.interchange && (
+                                    <><br /><span style={{ opacity: 0.65 }}>Interchange — {s.lines.join(' / ')}</span></>
+                                )}
+                            </span>
+                        </Tooltip>
+                    </CircleMarker>
+                ))}
+
                 {/* Origin marker */}
                 {origin.lat && origin.lon && (
                     <Marker position={[+origin.lat, +origin.lon]} icon={originIcon}>
@@ -509,48 +551,6 @@ export default function MapView({
 
                 {/* AQI heatmap — zoom-aware radius, stable keys, satellite contrast */}
                 {showAQI && <AQIHeatmapLayer aqiData={aqiData} />}
-
-                {/* Namma Metro — real BMRCL line colours, current operational
-                    network (3 lines, 85 stations, 2 interchanges). Rendered as
-                    background context (thin, ~0.8 opacity, no casing/shadow)
-                    so it doesn't compete with the routed path — the old
-                    version drew at weight 5 / 0.85 opacity *after* the route,
-                    so it visually sat on top of it wherever they crossed. */}
-                {showMetro && metroLines.map(({ line, color, stations }) => (
-                    <Polyline
-                        key={line}
-                        positions={stations.map(s => [s.lat, s.lon])}
-                        pathOptions={{
-                            color,
-                            weight: 3,
-                            opacity: 0.82,
-                            lineCap: 'round',
-                            lineJoin: 'round',
-                        }}
-                    />
-                ))}
-                {showMetro && metroStations.map(s => (
-                    <CircleMarker
-                        key={s.code}
-                        center={[s.lat, s.lon]}
-                        radius={s.interchange ? 5 : 3}
-                        pathOptions={{
-                            color: '#0b0f1a',
-                            weight: s.interchange ? 2 : 1.5,
-                            fillColor: s.interchange ? '#eef1fb' : METRO_LINE_COLORS[s.lines[0]],
-                            fillOpacity: 1,
-                        }}
-                    >
-                        <Tooltip direction="top" offset={[0, -4]} opacity={1}>
-                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
-                                {s.name}
-                                {s.interchange && (
-                                    <><br /><span style={{ opacity: 0.65 }}>Interchange — {s.lines.join(' / ')}</span></>
-                                )}
-                            </span>
-                        </Tooltip>
-                    </CircleMarker>
-                ))}
 
                 {/* Accident blackspots */}
                 {showBlackspots && blackspotData?.features?.map((f, i) => {
