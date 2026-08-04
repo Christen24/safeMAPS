@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import {
-    MapContainer, TileLayer, Polyline, Marker,
+    MapContainer, TileLayer, Polyline, Marker, GeoJSON,
     Popup, CircleMarker, Rectangle, ScaleControl, useMapEvents, useMap,
 } from 'react-leaflet';
 
@@ -382,6 +382,17 @@ export default function MapView({
 }) {
     const [colorMode, setColorMode] = useState('traffic'); // 'traffic' | 'aqi'
     const [hoveredGhostId, setHoveredGhostId] = useState(null);
+    const [showMetro, setShowMetro] = useState(true);
+    const [metroData, setMetroData] = useState(null);
+
+    useEffect(() => {
+        if (showMetro && !metroData) {
+            fetch('/metro.json')
+                .then(res => res.json())
+                .then(data => setMetroData(data))
+                .catch(err => console.error('Failed to load metro data:', err));
+        }
+    }, [showMetro, metroData]);
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
 
@@ -586,6 +597,32 @@ export default function MapView({
                         </Marker>
                     );
                 })}
+
+                {/* Metro network layer */}
+                {showMetro && metroData && (
+                    <GeoJSON
+                        key="metro-layer"
+                        data={metroData}
+                        style={(feature) => ({
+                            color: feature.properties.color || '#9C27B0',
+                            weight: 5,
+                            opacity: 0.85,
+                            lineCap: 'round',
+                            lineJoin: 'round'
+                        })}
+                        onEachFeature={(feature, layer) => {
+                            if (feature.properties.name) {
+                                layer.bindPopup(`<div class="sm-popup" style="min-width: 120px; font-family: var(--font-mono); padding: 8px;">
+                                    <div class="sm-popup-head" style="color: ${feature.properties.color || '#9C27B0'}">
+                                        <span class="sm-popup-dot" style="background: ${feature.properties.color || '#9C27B0'};"></span>
+                                        ${feature.properties.name.toUpperCase()}
+                                    </div>
+                                    <div class="sm-popup-body" style="margin-top: 6px;">${feature.properties.network || 'Namma Metro'}</div>
+                                </div>`);
+                            }
+                        }}
+                    />
+                )}
             </MapContainer>
 
             {/* ── Map controls ── */}
@@ -601,6 +638,12 @@ export default function MapView({
                     onClick={() => setShowBlackspots(!showBlackspots)}
                 >
                     ⚠ Blackspots
+                </button>
+                <button
+                    className={`map-control-btn ${showMetro ? 'active' : ''}`}
+                    onClick={() => setShowMetro(!showMetro)}
+                >
+                    🚇 Metro Network
                 </button>
                 <button
                     className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''} ${loadingIncidents ? 'loading' : ''}`}
