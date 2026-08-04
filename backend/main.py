@@ -22,6 +22,7 @@ from routes.aqi import router as aqi_router
 from routes.safety import router as safety_router
 from routes.user import router as user_router        # Phase 6
 from routes.incidents import router as incident_router  # Phase 7
+from routes.ai import router as ai_router
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,7 @@ app.include_router(aqi_router,      prefix="/api/aqi",       tags=["Air Quality"
 app.include_router(safety_router,   prefix="/api/safety",    tags=["Safety"])
 app.include_router(user_router,     prefix="/api/user",      tags=["Green Score"])
 app.include_router(incident_router, prefix="/api/incidents", tags=["Live Incidents"])
+app.include_router(ai_router,       prefix="/api/ai",        tags=["AI Demo"])
 
 
 @app.get("/health", tags=["System"])

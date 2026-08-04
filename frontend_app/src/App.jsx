@@ -4,6 +4,7 @@ import MapView from './components/MapView';
 import LandingPage from './components/LandingPage';
 import GreenScore, { SESSION_ID } from './components/GreenScore';
 import PWAInstallPrompt from './components/PWAInstallPrompt';
+import AIDemo from './pages/AIDemo';
 import { decodeURLToRoute, encodeRouteToURL, buildShareURL } from './utils/shareURL';
 import 'leaflet/dist/leaflet.css';
 import './index.css';
@@ -68,6 +69,7 @@ const NavBar = memo(function NavBar({ view, setView, handleShowAQI, isOffline, i
                     { id: 'dashboard',   label: 'Dashboard',   icon: '▣' },
                     { id: 'heatmaps',    label: 'Heatmaps',    icon: '◈' },
                     { id: 'greenscore',  label: 'Green Score', icon: '◆' },
+                    { id: 'ai',          label: 'AI Demo',     icon: '✦' },
                 ].map(tab => (
                     <button
                         key={tab.id}
@@ -580,10 +582,14 @@ export default function App() {
     }, [handleProfileChange, computeRouteWithCoords]);
 
     if (view === 'landing') {
-        return <LandingPage onStart={() => setView('dashboard')} />;
+        return <LandingPage onStart={() => setView('dashboard')} onLaunchAI={() => setView('ai')} />;
     }
 
     const showBanner = isOffline && !bannerDismissed;
+
+    if (view === 'ai') {
+        return <AIDemo onBack={() => setView('dashboard')} />;
+    }
 
     if (view === 'greenscore') {
         return (

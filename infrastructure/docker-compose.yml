@@ -68,6 +68,9 @@ services:
       CPCB_API_KEY: ${CPCB_API_KEY}
       WAZE_CCP_URL: ${WAZE_CCP_URL:-}
       X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-}
       CORS_ORIGINS: "http://localhost:3000,http://frontend"
       BBOX_MIN_LAT: "12.75"
       BBOX_MAX_LAT: "13.25"

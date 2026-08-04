@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     # X/Twitter bearer token — https://developer.twitter.com (free tier: 1500 tweets/month)
     x_bearer_token: Optional[str] = None
 
+    # --- Public AI + MCP demo ---
+    anthropic_api_key: Optional[str] = None
+    anthropic_model: str = "claude-sonnet-5"
+    mcp_server_url: str = "http://localhost:8001/mcp"
+    ai_max_tool_iterations: int = 6
+    ai_max_message_length: int = 1200
+    ai_request_timeout_seconds: int = 45
+    ai_rate_limit_window_seconds: int = 600
+    ai_rate_limit_requests: int = 10
+    ai_rate_limit_day_seconds: int = 86400
+    ai_rate_limit_day_requests: int = 50
+
     # Admin Security ---
     # Set ADMIN_API_KEY in .env. All /api/admin/* endpoints require the
     # X-Admin-Key header to match this value. If unset, admin endpoints

@@ -1,113 +1,109 @@
-# SafeMAPS — BTP Accident Data Pipeline
+# SafeMAPS - BTP Accident Data Pipeline
 
-## What this does
+## What This Does
 
-Downloads real Bangalore Traffic Police (BTP) crash data from OpenCity,
-geocodes each police station jurisdiction to GPS coordinates, and imports
-weighted blackspot data into the `accident_blackspots` table that SafeMAPS
-uses for health-aware routing.
+SafeMAPS now supports real Bangalore Traffic Police crash counts released via
+OpenCity as station-wise aggregate data. The pipeline converts those counts into
+coarse accident-risk blackspots that the router can use through the existing
+`accident_blackspots` table.
 
-## Data sources (all free, public domain)
+This is real BTP/OpenCity crash data, but it is not individual crash GPS data.
+Each traffic police station jurisdiction becomes one representative blackspot.
 
-| File | Source | What it contains |
-|------|--------|-----------------|
-| `btp_2018_2020.csv` | OpenCity / BTP | Station-wise fatal + non-fatal crashes, 2018–2020 |
-| `btp_2020_2022.csv` | OpenCity / BTP | Station-wise fatal + non-fatal crashes, 2020–2022 |
-| `btp_2023.csv`      | OpenCity / BTP | Station-wise fatal + non-fatal crashes, 2023 |
-| `btp_2024.csv`      | OpenCity / BTP | Station-wise total + fatal crashes, 2024 |
-| `btp_2025.csv`      | OpenCity / BTP | Station-wise total + fatal crashes, 2025 |
-| `btp_jurisdictions_2022.kml` | OpenCity / KSRSAC | Polygon boundaries of each BTP station jurisdiction |
+## Files
 
-All files are cached in `data_pipeline/_btp_cache/` after first download.
+| File | Purpose |
+|------|---------|
+| `_btp_cache/btp_2018_2020.csv` | Cached OpenCity/BTP crash counts |
+| `_btp_cache/btp_2020_2022.csv` | Cached OpenCity/BTP crash counts |
+| `_btp_cache/btp_2023.csv` | Cached OpenCity/BTP crash counts |
+| `_btp_cache/btp_2024.csv` | Cached OpenCity/BTP crash counts |
+| `_btp_cache/btp_2025.csv` | Cached OpenCity/BTP crash counts |
+| `btp_station_geocoding.py` | Station name aliases and representative coordinates |
+| `btp_station_importer.py` | Builds/imports real station-level blackspots |
+| `data/btp_station_blackspots.csv` | Generated CSV loaded into PostGIS |
+| `btp_accident_importer.py` | Separate RTI point-level importer for future GPS crash data |
 
-## CSV column structure (2023 format)
-
-```
-Zone, Sub-division, Station,
-2023 - Fatal Cases, 2023 - Killed People,
-2023 - Non-Fatal, 2023 - Injured People,
-2023 - Total Cases
-```
-
-Subtotal rows (Zone Total, Sub-division Total, Grand Total) are skipped.
-
-## How severity is calculated
-
-```
-raw_score = (fatal_cases × 5 + killed_people × 3 + non_fatal × 1)
-            / years_of_data
-
-severity_weight = min(raw_score / 10, 10.0)   # 0–10 scale
-```
-
-Severity tiers:
-- **Critical** (weight ≥ 7): International Airport, Yalahanka, Kengeri, Whitefield
-- **High** (weight ≥ 4): Peenya, Kamakshipalya, KR Puram, Electronic City
-- **Moderate** (weight ≥ 2): Most inner-city stations
-- **Low** (weight < 2): Lower-risk areas
-
-## How geocoding works
-
-1. **KML polygon centroids (preferred)** — the jurisdiction KML gives the
-   exact boundary polygon for each station. We compute the centroid of that
-   polygon as the station's representative coordinate. This places the
-   blackspot in the centre of the high-risk area, not just at the station building.
-
-2. **Nominatim fallback** — stations not found in the KML (name mismatches,
-   newer stations added after 2022) are geocoded via OpenStreetMap Nominatim
-   with the query `"{name} Traffic Police Station, Bangalore, India"`.
-
-## Installation
+## Build the CSV
 
 ```bash
 cd data_pipeline
-pip install httpx asyncpg shapely
+python btp_station_importer.py
 ```
 
-## Usage
+This writes:
+
+```text
+data/btp_station_blackspots.csv
+```
+
+Columns:
+
+```text
+lat,lon,severity,severity_weight,total_accidents,fatal_accidents,description
+```
+
+`severity_weight` is a numeric 0-10 value. It is preserved by
+`blackspot_mapper.py` and used by the backend graph cache when calculating edge
+accident risk.
+
+## Load Into the Database
+
+Run this after `road_segments` has been loaded by `osm_loader.py`, because
+blackspots are snapped to the nearest road edge:
 
 ```bash
-# Full run — downloads, parses, prints summary, imports to DB:
-python btp_accident_importer.py
-
-# Dry run — see what would be imported without touching the DB:
-python btp_accident_importer.py --dry-run
-
-# Append to existing blackspots (don't clear the table first):
-python btp_accident_importer.py --keep-existing
-
-# Re-run after updating data (cache is local, re-download by deleting cache):
-rm -rf data_pipeline/_btp_cache/
-python btp_accident_importer.py
+cd data_pipeline
+python btp_station_importer.py --load-db --clear
 ```
 
-## After import
+Equivalent two-step path:
 
-The router uses `severity_weight` from `accident_blackspots` when computing
-edge risk scores. After import, call the admin endpoint to refresh the
-in-memory graph cache immediately (otherwise the next scheduler cycle does it):
+```bash
+cd data_pipeline
+python btp_station_importer.py
+python blackspot_mapper.py --csv data/btp_station_blackspots.csv --clear
+```
+
+(`--csv` is optional here — `blackspot_mapper.py` now defaults to this same
+file. The synthetic `BUILT_IN_BLACKSPOTS` placeholder list that used to ship
+as the no-`--csv` fallback has been removed now that real data is available.)
+
+After importing, refresh the backend's in-memory graph cache:
 
 ```bash
 curl -X POST http://localhost:8000/api/admin/refresh-graph
 ```
 
-## Known limitations
+If your backend has `ADMIN_API_KEY` enabled, include the admin header.
 
-- **Station-level, not spot-level**: BTP publishes aggregates per police station
-  jurisdiction (each covers several km²), not individual crash GPS coordinates.
-  The blackspot is placed at the polygon centroid, which represents the whole
-  jurisdiction's risk, not a single dangerous intersection.
+## Severity Calculation
 
-- **No street-level precision**: For precise hotspot mapping you need individual
-  crash records with coordinates. These can be obtained via RTI request to BTP.
+For each station:
 
-- **Temporal**: Data reflects 2018–2025 historical patterns. New infrastructure
-  (flyovers, underpasses) may have changed risk profiles since then.
+```text
+raw_score = (fatal_cases * 5 + killed_people * 3 + non_fatal_cases) / years_of_data
+```
 
-## Data quality notes from OpenCity
+The raw scores are min-max scaled across all real BTP stations into a 0-10
+`severity_weight`. This avoids saturating most of the city as "critical" while
+still preserving the relative crash burden from the real data.
 
-- 2024 and 2025 CSVs do not include "Killed People" and "Injured People"
-  columns — only Total Crashes and Fatal Crashes. The pipeline handles this.
-- Whitefield 2023 data includes Mahadevapura and Bellandur stations.
-- Some station names differ between CSV and KML (e.g. "Int. Aiport" vs
-  "International Airport"). Manual overrides handle the known mismatches.
+Severity labels are derived from that weight:
+
+```text
+critical >= 7
+high     >= 4
+moderate >= 2
+low       < 2
+```
+
+## Known Limits
+
+- Station-level only: one blackspot represents a whole traffic police station
+  jurisdiction.
+- Not street-level: exact dangerous intersections still require point-level
+  accident records, such as the RTI data described in
+  `docs/RTI_BTP_accident_data.md`.
+- Historical signal: the data covers 2018-2025, so recent road changes may not
+  be reflected.

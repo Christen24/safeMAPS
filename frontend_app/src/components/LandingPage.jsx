@@ -60,7 +60,7 @@ const STATS = [
     { value: 'PWA',   label: 'Offline Ready' },
 ];
 
-const LandingPage = memo(function LandingPage({ onStart }) {
+const LandingPage = memo(function LandingPage({ onStart, onLaunchAI }) {
     return (
         <div className="app landing-mode">
             {/* Hero */}
@@ -90,6 +90,11 @@ const LandingPage = memo(function LandingPage({ onStart }) {
                     <button className="landing-cta-primary" onClick={onStart}>
                         <span>▶ Launch Dashboard</span>
                     </button>
+                    {onLaunchAI && (
+                        <button className="landing-cta-ai" onClick={onLaunchAI}>
+                            <span>✦ Try Live AI Demo</span>
+                        </button>
+                    )}
                     <button
                         className="landing-cta-secondary"
                         onClick={() =>

@@ -30,6 +30,7 @@ async def get_blackspots(
             "properties": {
                 "id": b["id"],
                 "severity": b["severity"],
+                "severity_weight": b["severity_weight"],
                 "total_accidents": b["total_accidents"],
                 "fatal_accidents": b["fatal_accidents"],
                 "description": b.get("description"),

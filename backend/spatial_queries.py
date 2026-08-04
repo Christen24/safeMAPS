@@ -146,6 +146,7 @@ async def get_blackspots_in_bbox(
             ST_Y(geom) AS lat,
             ST_X(geom) AS lon,
             severity,
+            severity_weight,
             total_accidents,
             fatal_accidents,
             description
