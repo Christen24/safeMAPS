@@ -440,19 +440,15 @@ export default function MapView({
                 {/* Origin marker */}
                 {origin.lat && origin.lon && (
                     <Marker position={[+origin.lat, +origin.lon]} icon={originIcon}>
-                        <Popup className="tactical-popup">
-                            <div style={{
-                                fontFamily: 'JetBrains Mono, monospace',
-                                fontSize: '11px',
-                                color: '#4ecb8d',
-                                background: '#090c14',
-                                padding: '6px 8px',
-                                borderRadius: '2px',
-                            }}>
-                                ◎ ORIGIN<br />
-                                <span style={{ color: '#b3bbd6' }}>
+                        <Popup>
+                            <div className="sm-popup">
+                                <div className="sm-popup-head" style={{ color: '#4ecb8d' }}>
+                                    <span className="sm-popup-dot" style={{ background: '#4ecb8d', boxShadow: '0 0 6px #4ecb8d99' }} />
+                                    ORIGIN
+                                </div>
+                                <div className="sm-popup-coords">
                                     {(+origin.lat).toFixed(5)}, {(+origin.lon).toFixed(5)}
-                                </span>
+                                </div>
                             </div>
                         </Popup>
                     </Marker>
@@ -462,18 +458,14 @@ export default function MapView({
                 {destination.lat && destination.lon && (
                     <Marker position={[+destination.lat, +destination.lon]} icon={destIcon}>
                         <Popup>
-                            <div style={{
-                                fontFamily: 'JetBrains Mono, monospace',
-                                fontSize: '11px',
-                                color: '#f16565',
-                                background: '#090c14',
-                                padding: '6px 8px',
-                                borderRadius: '2px',
-                            }}>
-                                ◎ DESTINATION<br />
-                                <span style={{ color: '#b3bbd6' }}>
+                            <div className="sm-popup">
+                                <div className="sm-popup-head" style={{ color: '#f16565' }}>
+                                    <span className="sm-popup-dot" style={{ background: '#f16565', boxShadow: '0 0 6px #f1656599' }} />
+                                    DESTINATION
+                                </div>
+                                <div className="sm-popup-coords">
                                     {(+destination.lat).toFixed(5)}, {(+destination.lon).toFixed(5)}
-                                </span>
+                                </div>
                             </div>
                         </Popup>
                     </Marker>
@@ -542,27 +534,19 @@ export default function MapView({
                             }}
                         >
                             <Popup>
-                                <div style={{
-                                    fontFamily: 'JetBrains Mono, monospace',
-                                    fontSize: '11px',
-                                    background: '#090c14',
-                                    padding: '8px 10px',
-                                    borderRadius: '2px',
-                                    color: '#d8e0f0',
-                                    minWidth: '160px',
-                                }}>
-                                    <div style={{ color: '#f16565', marginBottom: 4 }}>
-                                        ⚠ BLACKSPOT
+                                <div className="sm-popup" style={{ minWidth: '170px' }}>
+                                    <div className="sm-popup-head" style={{ color: '#f16565' }}>
+                                        <span className="sm-popup-dot" style={{ background: '#f16565', boxShadow: '0 0 6px #f1656599' }} />
+                                        BLACKSPOT
                                     </div>
-                                    <div style={{ color: '#b3bbd6', fontSize: '10px' }}>
+                                    <div className="sm-popup-divider" />
+                                    <div className="sm-popup-body">
                                         SEV: {p.severity?.toUpperCase()}
                                         {p.severity_weight != null && ` (${p.severity_weight.toFixed(1)}/10)`}<br />
-                                        ACCIDENTS: {p.total_accidents} (FATAL: {p.fatal_accidents})
+                                        ACCIDENTS: {p.total_accidents} <span className="sm-popup-dim">(FATAL: {p.fatal_accidents})</span>
                                     </div>
                                     {p.description && (
-                                        <div style={{ marginTop: 4, fontSize: '10px', color: '#838cb0' }}>
-                                            {p.description}
-                                        </div>
+                                        <div className="sm-popup-desc">{p.description}</div>
                                     )}
                                 </div>
                             </Popup>
@@ -582,27 +566,19 @@ export default function MapView({
                             icon={makeTriangleIcon(color)}
                         >
                             <Popup>
-                                <div style={{
-                                    fontFamily: 'JetBrains Mono, monospace',
-                                    fontSize: '11px',
-                                    background: '#090c14',
-                                    padding: '8px 10px',
-                                    borderRadius: '2px',
-                                    color: '#d8e0f0',
-                                    minWidth: '180px',
-                                }}>
-                                    <div style={{ color, marginBottom: 4, fontWeight: 700 }}>
-                                        ⚠ {p.incident_type?.toUpperCase()}
+                                <div className="sm-popup" style={{ minWidth: '190px' }}>
+                                    <div className="sm-popup-head" style={{ color }}>
+                                        <span className="sm-popup-dot" style={{ background: color, boxShadow: `0 0 6px ${color}99` }} />
+                                        {p.incident_type?.toUpperCase()}
                                     </div>
-                                    <div style={{ color: '#b3bbd6', fontSize: '10px' }}>
+                                    <div className="sm-popup-divider" />
+                                    <div className="sm-popup-body">
                                         SRC: {p.source?.toUpperCase()} &nbsp; SEV: {p.severity}/3
                                     </div>
                                     {p.description && (
-                                        <div style={{ marginTop: 4, fontSize: '10px', color: '#8892aa' }}>
-                                            {p.description.slice(0, 120)}
-                                        </div>
+                                        <div className="sm-popup-desc">{p.description.slice(0, 120)}</div>
                                     )}
-                                    <div style={{ marginTop: 4, fontSize: '9px', color: '#838cb0' }}>
+                                    <div className="sm-popup-meta">
                                         EXPIRES: {new Date(p.expires_at).toLocaleTimeString()}
                                     </div>
                                 </div>
