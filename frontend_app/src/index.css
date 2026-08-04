@@ -1298,6 +1298,68 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   flex-shrink: 0;
 }
 
+/* Metro line legend — echoes the BMRCL reference map's own legend box */
+.metro-legend {
+  position: absolute;
+  top: 84px;
+  left: 12px;
+  z-index: 800;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  min-width: 128px;
+}
+
+.metro-legend h4 {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  margin: 0 0 6px 0;
+}
+
+.metro-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+}
+
+.metro-legend-item:last-child {
+  margin-bottom: 0;
+}
+
+.metro-swatch {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Tooltips — used for metro station hover labels. Leaflet defaults to a
+   white box + white arrow, same mismatch fixed for popups earlier. */
+.leaflet-tooltip {
+  background: #0b0f1a;
+  color: var(--text-primary);
+  border: 1px solid var(--border-med);
+  border-radius: var(--r-xs);
+  box-shadow: 0 8px 20px rgba(3, 5, 10, 0.5);
+  padding: 5px 8px;
+}
+
+.leaflet-tooltip-top:before    { border-top-color: #0b0f1a; }
+.leaflet-tooltip-bottom:before { border-bottom-color: #0b0f1a; }
+.leaflet-tooltip-left:before   { border-left-color: #0b0f1a; }
+.leaflet-tooltip-right:before  { border-right-color: #0b0f1a; }
+
+
 
 
 @keyframes scanPulse {
@@ -3134,508 +3196,4 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 
 .pick-dest-overlay-icon {
     font-size: 1rem;
-}
-
-/* ============================================================
-   SafeMAPS AI Demo — Chat + live MCP tool-call visualization
-   (frontend_app/src/pages/AIDemo.jsx + components/ai/*)
-   ============================================================ */
-
-.ai-demo-shell {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  width: 100vw;
-  background: var(--base);
-  background-image:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: 40px 40px;
-  color: var(--text-primary);
-  overflow: hidden;
-}
-
-.ai-demo-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 22px;
-  border-bottom: 1px solid var(--border-dim);
-  background: var(--surface-0);
-  flex-shrink: 0;
-}
-
-.ai-demo-brand {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.ai-demo-brand h1 {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: 0.02em;
-}
-
-.ai-demo-brand p {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-tertiary);
-  margin-top: 2px;
-}
-
-.ai-back-btn {
-  background: var(--surface-1);
-  border: 1px solid var(--border-dim);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  border-radius: var(--r-md);
-  padding: 8px 14px;
-  cursor: pointer;
-  transition: border-color var(--ease-snap), color var(--ease-snap);
-}
-
-.ai-back-btn:hover {
-  border-color: var(--border-hi);
-  color: var(--text-primary);
-}
-
-.ai-mcp-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 6px 12px;
-  border: 1px solid var(--border-dim);
-  border-radius: var(--r-lg);
-  background: var(--surface-1);
-  color: var(--text-secondary);
-}
-
-.ai-mcp-status > span:first-child {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.ai-mcp-status.connected > span:first-child {
-  background: var(--acid);
-  box-shadow: var(--acid-glow);
-}
-
-.ai-mcp-status.connecting > span:first-child {
-  background: var(--amber);
-  animation: ai-pulse 1.4s ease-in-out infinite;
-}
-
-.ai-mcp-status.unavailable > span:first-child {
-  background: var(--infra);
-}
-
-.ai-mcp-status b {
-  color: var(--text-tertiary);
-  font-weight: 500;
-  margin-left: 2px;
-}
-
-@keyframes ai-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-/* ── Body layout: chat / map split ─────────────────────────── */
-
-.ai-demo-main {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
-.ai-chat-panel {
-  display: flex;
-  flex-direction: column;
-  width: 42%;
-  min-width: 340px;
-  border-right: 1px solid var(--border-dim);
-  background: var(--void);
-}
-
-.ai-map-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  background: var(--base);
-}
-
-@media (max-width: 900px) {
-  .ai-demo-main { flex-direction: column; }
-  .ai-chat-panel {
-    width: 100%; min-width: 0; height: 55%;
-    border-right: none; border-bottom: 1px solid var(--border-dim);
-  }
-  .ai-map-panel { height: 45%; }
-}
-
-/* ── Chat scroll area ───────────────────────────────────────── */
-
-.ai-chat-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.ai-empty-state {
-  padding: 24px 4px;
-}
-
-.ai-empty-state h2 {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 17px;
-  line-height: 1.4;
-  margin-bottom: 16px;
-  color: var(--text-primary);
-}
-
-.ai-suggested {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.ai-suggested button {
-  text-align: left;
-  background: var(--surface-0);
-  border: 1px solid var(--border-dim);
-  color: var(--text-primary);
-  border-radius: var(--r-lg);
-  padding: 10px 14px;
-  font-family: var(--font-body);
-  font-size: 13px;
-  cursor: pointer;
-  transition: border-color var(--ease-snap), background var(--ease-snap);
-}
-
-.ai-suggested button:hover {
-  border-color: var(--border-hi);
-  background: var(--surface-1);
-}
-
-/* ── Chat messages ──────────────────────────────────────────── */
-
-.ai-message {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-width: 92%;
-}
-
-.ai-message.user {
-  align-self: flex-end;
-  align-items: flex-end;
-}
-
-.ai-message.assistant {
-  align-self: flex-start;
-  align-items: flex-start;
-}
-
-.ai-message > span {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-.ai-message > p {
-  padding: 10px 14px;
-  border-radius: var(--r-lg);
-  font-size: 13.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-}
-
-.ai-message.user > p {
-  background: var(--acid-mute);
-  border: 1px solid var(--border-hi);
-  color: var(--text-primary);
-}
-
-.ai-message.assistant > p {
-  background: var(--surface-0);
-  border: 1px solid var(--border-dim);
-  color: var(--text-primary);
-}
-
-.ai-progress {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--text-tertiary);
-  padding: 4px 2px;
-}
-
-.ai-progress::before {
-  content: '◌ ';
-  color: var(--ice);
-}
-
-/* ── MCP tool cards ─────────────────────────────────────────── */
-
-.ai-tool-card {
-  border: 1px solid var(--border-dim);
-  border-radius: var(--r-md);
-  background: var(--surface-1);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  overflow: hidden;
-}
-
-.ai-tool-card.completed { border-color: var(--border-hi); }
-.ai-tool-card.failed { border-color: var(--infra); background: var(--infra-mute); }
-
-.ai-tool-head {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  padding: 10px 12px;
-  text-align: left;
-}
-
-.ai-tool-state {
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ice);
-  padding: 2px 7px;
-  border: 1px solid var(--ice-mute);
-  border-radius: var(--r-sm);
-}
-
-.ai-tool-card.completed .ai-tool-state {
-  color: var(--acid);
-  border-color: var(--acid-mute);
-}
-
-.ai-tool-card.failed .ai-tool-state {
-  color: var(--infra);
-  border-color: var(--infra-mute);
-}
-
-.ai-tool-name {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.ai-tool-time {
-  margin-left: auto;
-  color: var(--text-tertiary);
-}
-
-.ai-tool-args {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  padding: 0 12px 10px;
-  color: var(--text-secondary);
-}
-
-.ai-tool-args b {
-  color: var(--text-tertiary);
-  font-weight: 500;
-  margin-right: 4px;
-}
-
-.ai-tool-result {
-  margin: 0 12px 12px;
-  max-height: 220px;
-  overflow: auto;
-  background: var(--void);
-  border: 1px solid var(--border-dim);
-  border-radius: var(--r-sm);
-  padding: 8px;
-  font-size: 11px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-secondary);
-}
-
-/* ── Input bar ──────────────────────────────────────────────── */
-
-.ai-input-bar {
-  display: flex;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border-dim);
-  background: var(--surface-0);
-  flex-shrink: 0;
-}
-
-.ai-input-bar input {
-  flex: 1;
-  background: var(--void);
-  border: 1px solid var(--border-dim);
-  border-radius: var(--r-md);
-  color: var(--text-primary);
-  font-family: var(--font-body);
-  font-size: 13px;
-  padding: 10px 12px;
-}
-
-.ai-input-bar input:focus {
-  outline: none;
-  border-color: var(--border-hi);
-}
-
-.ai-input-bar button {
-  background: var(--acid);
-  color: var(--void);
-  border: none;
-  border-radius: var(--r-md);
-  padding: 0 18px;
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 13px;
-  cursor: pointer;
-  transition: opacity var(--ease-snap);
-}
-
-.ai-input-bar button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* ── Map panel ──────────────────────────────────────────────── */
-
-.ai-map-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-dim);
-  background: var(--surface-0);
-  flex-shrink: 0;
-}
-
-.ai-map-toolbar > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.ai-map-toolbar > div > span {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-.ai-map-toolbar > div > b {
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.ai-tools-menu {
-  position: relative;
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.ai-tools-menu summary {
-  cursor: pointer;
-  list-style: none;
-  color: var(--ice);
-  border: 1px solid var(--border-dim);
-  border-radius: var(--r-md);
-  padding: 6px 12px;
-}
-
-.ai-tools-menu summary::-webkit-details-marker { display: none; }
-
-.ai-tools-menu ul {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--border-dim);
-  border-radius: var(--r-md);
-  padding: 8px 0;
-  min-width: 220px;
-  list-style: none;
-  z-index: 800;
-}
-
-.ai-tools-menu li {
-  padding: 6px 14px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.ai-map {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-}
-
-.ai-map .leaflet-container {
-  height: 100%;
-  width: 100%;
-  background: var(--base);
-}
-
-.ai-map-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 40px;
-  pointer-events: none;
-  background: rgba(13, 19, 34, 0.4);
-  z-index: 400;
-}
-
-.ai-map-empty span {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-tertiary);
-  max-width: 32ch;
-}
-
-/* ── Landing page AI CTA ────────────────────────────────────── */
-
-.landing-cta-ai {
-  background: var(--surface-1);
-  border: 1px solid var(--violet);
-  color: var(--violet);
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 14px;
-  border-radius: var(--r-lg);
-  padding: 14px 26px;
-  cursor: pointer;
-  transition: background var(--ease-snap), color var(--ease-snap);
-}
-
-.landing-cta-ai:hover {
-  background: var(--violet);
-  color: var(--void);
 }

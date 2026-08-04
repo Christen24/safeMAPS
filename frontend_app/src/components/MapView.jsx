@@ -1,10 +1,11 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import {
-    MapContainer, TileLayer, Polyline, Marker, GeoJSON,
-    Popup, CircleMarker, Rectangle, ScaleControl, useMapEvents, useMap,
+    MapContainer, TileLayer, Polyline, Marker,
+    Popup, Tooltip, CircleMarker, Rectangle, ScaleControl, useMapEvents, useMap,
 } from 'react-leaflet';
 
 import AQIHeatmapLayer from './AQIHeatmapLayer';
+import { buildMetroLines, buildMetroStations, METRO_LINE_COLORS } from '../data/nammaMetro';
 
 // (AQILayer + useMapZoom removed — replaced by canvas-based AQIHeatmapLayer)
 import L from 'leaflet';
@@ -383,16 +384,8 @@ export default function MapView({
     const [colorMode, setColorMode] = useState('traffic'); // 'traffic' | 'aqi'
     const [hoveredGhostId, setHoveredGhostId] = useState(null);
     const [showMetro, setShowMetro] = useState(true);
-    const [metroData, setMetroData] = useState(null);
-
-    useEffect(() => {
-        if (showMetro && !metroData) {
-            fetch('/metro.json')
-                .then(res => res.json())
-                .then(data => setMetroData(data))
-                .catch(err => console.error('Failed to load metro data:', err));
-        }
-    }, [showMetro, metroData]);
+    const metroLines = useMemo(() => buildMetroLines(), []);
+    const metroStations = useMemo(() => buildMetroStations(), []);
     const toLL = (r) =>
         r?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || [];
 
@@ -517,6 +510,48 @@ export default function MapView({
                 {/* AQI heatmap — zoom-aware radius, stable keys, satellite contrast */}
                 {showAQI && <AQIHeatmapLayer aqiData={aqiData} />}
 
+                {/* Namma Metro — real BMRCL line colours, current operational
+                    network (3 lines, 85 stations, 2 interchanges). Rendered as
+                    background context (thin, ~0.8 opacity, no casing/shadow)
+                    so it doesn't compete with the routed path — the old
+                    version drew at weight 5 / 0.85 opacity *after* the route,
+                    so it visually sat on top of it wherever they crossed. */}
+                {showMetro && metroLines.map(({ line, color, stations }) => (
+                    <Polyline
+                        key={line}
+                        positions={stations.map(s => [s.lat, s.lon])}
+                        pathOptions={{
+                            color,
+                            weight: 3,
+                            opacity: 0.82,
+                            lineCap: 'round',
+                            lineJoin: 'round',
+                        }}
+                    />
+                ))}
+                {showMetro && metroStations.map(s => (
+                    <CircleMarker
+                        key={s.code}
+                        center={[s.lat, s.lon]}
+                        radius={s.interchange ? 5 : 3}
+                        pathOptions={{
+                            color: '#0b0f1a',
+                            weight: s.interchange ? 2 : 1.5,
+                            fillColor: s.interchange ? '#eef1fb' : METRO_LINE_COLORS[s.lines[0]],
+                            fillOpacity: 1,
+                        }}
+                    >
+                        <Tooltip direction="top" offset={[0, -4]} opacity={1}>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                                {s.name}
+                                {s.interchange && (
+                                    <><br /><span style={{ opacity: 0.65 }}>Interchange — {s.lines.join(' / ')}</span></>
+                                )}
+                            </span>
+                        </Tooltip>
+                    </CircleMarker>
+                ))}
+
                 {/* Accident blackspots */}
                 {showBlackspots && blackspotData?.features?.map((f, i) => {
                     const [lon, lat] = f.geometry.coordinates;
@@ -597,32 +632,6 @@ export default function MapView({
                         </Marker>
                     );
                 })}
-
-                {/* Metro network layer */}
-                {showMetro && metroData && (
-                    <GeoJSON
-                        key="metro-layer"
-                        data={metroData}
-                        style={(feature) => ({
-                            color: feature.properties.color || '#9C27B0',
-                            weight: 5,
-                            opacity: 0.85,
-                            lineCap: 'round',
-                            lineJoin: 'round'
-                        })}
-                        onEachFeature={(feature, layer) => {
-                            if (feature.properties.name) {
-                                layer.bindPopup(`<div class="sm-popup" style="min-width: 120px; font-family: var(--font-mono); padding: 8px;">
-                                    <div class="sm-popup-head" style="color: ${feature.properties.color || '#9C27B0'}">
-                                        <span class="sm-popup-dot" style="background: ${feature.properties.color || '#9C27B0'};"></span>
-                                        ${feature.properties.name.toUpperCase()}
-                                    </div>
-                                    <div class="sm-popup-body" style="margin-top: 6px;">${feature.properties.network || 'Namma Metro'}</div>
-                                </div>`);
-                            }
-                        }}
-                    />
-                )}
             </MapContainer>
 
             {/* ── Map controls ── */}
@@ -668,6 +677,19 @@ export default function MapView({
                     </button>
                 )}
             </div>
+
+            {/* ── Metro legend — real BMRCL line colours ── */}
+            {showMetro && (
+                <div className="metro-legend">
+                    <h4>Namma Metro</h4>
+                    {Object.entries(METRO_LINE_COLORS).map(([line, color]) => (
+                        <div className="metro-legend-item" key={line}>
+                            <span className="metro-swatch" style={{ background: color }} />
+                            {line}
+                        </div>
+                    ))}
+                </div>
+            )}
 
             {/* ── My Location (Google-Maps-style recenter) ── */}
             <button
