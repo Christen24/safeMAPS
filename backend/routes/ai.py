@@ -20,6 +20,14 @@ _requests_by_ip: dict[str, Deque[float]] = defaultdict(deque)
 _requests_by_ip_day: dict[str, Deque[float]] = defaultdict(deque)
 
 
+def _active_llm_label() -> str:
+    if settings.llm_provider == "openrouter" and settings.openrouter_api_key:
+        return f"openrouter:{settings.openrouter_model}"
+    if settings.anthropic_api_key:
+        return f"anthropic:{settings.anthropic_model}"
+    return "local-demo-fallback"
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     session_id: str | None = None
@@ -72,14 +80,14 @@ async def ai_status():
             "mcp": "connected",
             "tool_count": len(tools),
             "tools": [tool.name for tool in tools],
-            "llm": "anthropic" if settings.anthropic_api_key else "local-demo-fallback",
+            "llm": _active_llm_label(),
         }
     except Exception as exc:
         return {
             "mcp": "unavailable",
             "tool_count": 0,
             "tools": [],
-            "llm": "anthropic" if settings.anthropic_api_key else "local-demo-fallback",
+            "llm": _active_llm_label(),
             "error": str(exc),
         }
 

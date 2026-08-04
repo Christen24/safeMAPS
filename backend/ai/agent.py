@@ -37,6 +37,24 @@ def _event(event_type: str, **payload) -> dict[str, Any]:
     return {"type": event_type, **payload}
 
 
+def _tools_for_openrouter(tools) -> list[dict[str, Any]]:
+    """OpenRouter (and any OpenAI-compatible endpoint) expects tools as
+    {"type": "function", "function": {name, description, parameters}} —
+    reshaped from the same MCP tool objects `tools_for_anthropic` uses."""
+    anthropic_shaped = tools_for_anthropic(tools)
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in anthropic_shaped
+    ]
+
+
 def _find_place(message: str, default: str | None = None) -> tuple[str, tuple[float, float]] | None:
     text = message.lower()
     matches = [(name, coords) for name, coords in LOCALITIES.items() if name in text]
@@ -123,7 +141,10 @@ class SafeMapsAgent:
         tools = await self.mcp.list_tools()
         yield _event("mcp_status", status="connected", tool_count=len(tools))
 
-        if settings.anthropic_api_key:
+        if settings.llm_provider == "openrouter" and settings.openrouter_api_key:
+            async for item in self._stream_openrouter(message, tools, history if history is not None else []):
+                yield item
+        elif settings.anthropic_api_key:
             async for item in self._stream_anthropic(message, tools, history if history is not None else []):
                 yield item
         else:
@@ -192,6 +213,96 @@ class SafeMapsAgent:
                     "max_tokens": 900,
                     "system": SYSTEM_PROMPT,
                     "messages": messages,
+                    "tools": tools,
+                },
+            )
+        response.raise_for_status()
+        return response.json()
+
+    # ── OpenRouter path ──────────────────────────────────────────────
+    # OpenRouter speaks the OpenAI chat-completions + `tool_calls` shape,
+    # not Anthropic's native content-block/`tool_use` shape used above —
+    # so this keeps its own message history format (role/content/
+    # tool_calls, plus role:"tool" for results) rather than sharing
+    # `_stream_anthropic`'s. Which shape a session's history is in
+    # follows whichever provider is configured server-side.
+
+    async def _stream_openrouter(
+        self, message: str, tools, history: list[dict[str, Any]]
+    ) -> AsyncIterator[dict[str, Any]]:
+        messages = history  # mutated in place; caller persists it to the session store
+        messages.append({"role": "user", "content": message})
+        tool_defs = _tools_for_openrouter(tools)
+
+        for _iteration in range(settings.ai_max_tool_iterations):
+            try:
+                response = await self._openrouter_chat(messages, tool_defs)
+            except httpx.HTTPStatusError as exc:
+                detail = exc.response.text[:300]
+                yield _event("error", message=f"OpenRouter request failed: {detail}")
+                return
+
+            choice = (response.get("choices") or [{}])[0]
+            msg = choice.get("message", {})
+            tool_calls = msg.get("tool_calls") or []
+            text = msg.get("content") or ""
+
+            # Persist exactly what the API returned (minus provider-internal
+            # fields) so the next turn's request is well-formed.
+            messages.append({
+                "role": "assistant",
+                "content": msg.get("content"),
+                **({"tool_calls": tool_calls} if tool_calls else {}),
+            })
+
+            if not tool_calls:
+                yield _event("text_delta", content=text or "I could not complete that request.")
+                return
+
+            for call in tool_calls:
+                fn = call.get("function", {})
+                name = fn.get("name", "")
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                yield _event("tool_start", tool=name, arguments=args)
+                result = await self.mcp.call_tool(name, args)
+                yield _event(
+                    "tool_result",
+                    tool=name,
+                    arguments=args,
+                    duration_ms=result.duration_ms,
+                    result=result.result,
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.get("id"),
+                    "content": json.dumps(result.result, default=str),
+                })
+
+        yield _event("error", message="The agent reached the maximum tool-iteration limit.")
+
+    async def _openrouter_chat(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        headers = {
+            "Authorization": f"Bearer {settings.openrouter_api_key or ''}",
+            "content-type": "application/json",
+        }
+        if settings.openrouter_site_url:
+            headers["HTTP-Referer"] = settings.openrouter_site_url
+        if settings.openrouter_app_name:
+            headers["X-Title"] = settings.openrouter_app_name
+
+        async with httpx.AsyncClient(timeout=settings.ai_request_timeout_seconds) as client:
+            response = await client.post(
+                f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
+                headers=headers,
+                json={
+                    "model": settings.openrouter_model,
+                    "max_tokens": 900,
+                    "messages": [{"role": "system", "content": SYSTEM_PROMPT}, *messages],
                     "tools": tools,
                 },
             )

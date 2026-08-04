@@ -44,6 +44,20 @@ class Settings(BaseSettings):
     ai_rate_limit_day_seconds: int = 86400
     ai_rate_limit_day_requests: int = 50
 
+    # LLM provider for the AI demo: "anthropic" (direct API) or "openrouter"
+    # (routes through https://openrouter.ai — one key, many models, including
+    # Claude). OPENROUTER_API_KEY takes priority when llm_provider=openrouter;
+    # otherwise falls back to the direct ANTHROPIC_API_KEY path, and finally
+    # to the deterministic local fallback if neither key is set.
+    llm_provider: str = "anthropic"
+    openrouter_api_key: Optional[str] = None
+    openrouter_model: str = "anthropic/claude-sonnet-4.5"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Optional but recommended by OpenRouter for their public leaderboards —
+    # https://openrouter.ai/docs#requests. Safe to leave blank.
+    openrouter_site_url: Optional[str] = None
+    openrouter_app_name: str = "SafeMAPS AI Demo"
+
     # Admin Security ---
     # Set ADMIN_API_KEY in .env. All /api/admin/* endpoints require the
     # X-Admin-Key header to match this value. If unset, admin endpoints
