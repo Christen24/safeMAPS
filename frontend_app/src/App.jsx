@@ -57,7 +57,7 @@ const NavBar = memo(function NavBar({ view, setView, handleShowAQI, isOffline, i
             {/* Brand */}
             <div className="nav-brand">
                 <div className="nav-logo">
-                    <img src="/favicon.png" alt="SafeMAPS" className="nav-hex-img" />
+                    <div className="nav-hex" />
                     <span className="nav-wordmark">SafeMAPS</span>
                 </div>
                 <span className="nav-system-label">BLR HEALTH ROUTING · v0.5</span>
