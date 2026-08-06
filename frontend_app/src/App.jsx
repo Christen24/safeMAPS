@@ -69,7 +69,7 @@ const NavBar = memo(function NavBar({ view, setView, handleShowAQI, isOffline, i
                     { id: 'dashboard',   label: 'Dashboard',   icon: '▣' },
                     { id: 'heatmaps',    label: 'Heatmaps',    icon: '◈' },
                     { id: 'greenscore',  label: 'Green Score', icon: '◆' },
-                    { id: 'ai',          label: 'AI Demo',     icon: '✦' },
+                    { id: 'ai',          label: 'Plan Route',  icon: '✦' },
                 ].map(tab => (
                     <button
                         key={tab.id}
