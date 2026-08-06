@@ -678,18 +678,7 @@ export default function MapView({
                 )}
             </div>
 
-            {/* ── Metro legend — real BMRCL line colours ── */}
-            {showMetro && (
-                <div className="metro-legend">
-                    <h4>Namma Metro</h4>
-                    {Object.entries(METRO_LINE_COLORS).map(([line, color]) => (
-                        <div className="metro-legend-item" key={line}>
-                            <span className="metro-swatch" style={{ background: color }} />
-                            {line}
-                        </div>
-                    ))}
-                </div>
-            )}
+
 
             {/* ── My Location (Google-Maps-style recenter) ── */}
             <button
