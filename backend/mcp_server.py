@@ -287,7 +287,8 @@ async def get_aqi_heatmap_summary(
     rather than the full grid — the full GeoJSON is large and better
     suited to the /api/aqi/heatmap HTTP endpoint the map UI uses.
     """
-    cells = await get_aqi_heatmap(min_lat, max_lat, min_lon, max_lon)
+    result = await get_aqi_heatmap(min_lat, max_lat, min_lon, max_lon)
+    cells = result["cells"]
     if not cells:
         return {"cell_count": 0, "message": "No AQI data for this area."}
 
@@ -314,7 +315,8 @@ async def get_aqi_near(lat: float, lon: float, radius_m: float = 1000.0) -> dict
     station's latest reading if no grid cell is found.
     """
     min_lat, max_lat, min_lon, max_lon = _bbox_from_point(lat, lon, radius_m)
-    cells = await get_aqi_heatmap(min_lat, max_lat, min_lon, max_lon)
+    result = await get_aqi_heatmap(min_lat, max_lat, min_lon, max_lon)
+    cells = result["cells"]
 
     if cells:
         nearest = min(cells, key=lambda c: haversine(lat, lon, c["center_lat"], c["center_lon"]))

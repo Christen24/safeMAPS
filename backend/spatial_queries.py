@@ -9,6 +9,13 @@ All other helpers remain and are used by API routes.
 import json
 from database import db
 
+# Grid cell size — must match the step_lat/step_lon constants in
+# data_pipeline/database_seeder.sql's grid generation block. Cells are
+# uniform rectangles, so callers reconstruct bounds from a centroid +
+# these steps instead of us shipping full polygon geometry per cell.
+GRID_STEP_LAT = 0.0009
+GRID_STEP_LON = 0.00098
+
 
 async def snap_to_nearest_node(
     lat: float,
@@ -112,27 +119,84 @@ async def get_edges_in_bbox(
     ]
 
 
+def _aggregation_factor(zoom: int | None) -> int:
+    """
+    Grid cells are ~100m — at city-wide zoom levels individual cells
+    aren't visually distinguishable anyway, and there's no point paying
+    for tens of thousands of rows, JSON-encoding them, and shipping them
+    over the wire just to draw pixels that overlap on screen. The
+    further out the view, the more cells get merged into one NxN block
+    server-side before the response is built.
+    """
+    if zoom is None or zoom >= 15:
+        return 1
+    if zoom >= 13:
+        return 2
+    if zoom >= 11:
+        return 4
+    return 8
+
+
 async def get_aqi_heatmap(
     min_lat: float, max_lat: float,
     min_lon: float, max_lon: float,
-) -> list[dict]:
-    """Get AQI grid cells within a bounding box for heatmap rendering."""
-    query = """
-        SELECT
-            id,
-            ST_Y(ST_Centroid(geom)) AS center_lat,
-            ST_X(ST_Centroid(geom)) AS center_lon,
-            aqi_value,
-            ST_AsGeoJSON(geom) AS geometry
-        FROM grid_cells
-        WHERE geom && ST_MakeEnvelope($3, $1, $4, $2, 4326)
-          AND aqi_value IS NOT NULL;
+    zoom: int | None = None,
+) -> dict:
     """
-    rows = await db.fetch(query, min_lat, max_lat, min_lon, max_lon)
-    return [
-        {**dict(row), "geometry": json.loads(row["geometry"])}
-        for row in rows
-    ]
+    Get AQI grid cells within a bounding box.
+
+    Returns centroids + a value, not per-cell polygon geometry — cells
+    are uniform rectangles on a fixed grid, so shipping 5 coordinate
+    pairs per cell (and having Postgres ST_AsGeoJSON-encode, then Python
+    json.loads, then FastAPI re-encode every one of them) was pure
+    overhead. Callers reconstruct each cell's bounds from
+    center +/- half of the returned cell_step_lat/cell_step_lon.
+
+    At low zoom, cells are aggregated server-side into coarser NxN
+    blocks (see _aggregation_factor) so a city-wide view returns a
+    fraction of the ~110k-cell grid instead of all of it.
+    """
+    factor = _aggregation_factor(zoom)
+
+    if factor == 1:
+        query = """
+            SELECT
+                id,
+                ST_Y(ST_Centroid(geom)) AS center_lat,
+                ST_X(ST_Centroid(geom)) AS center_lon,
+                aqi_value,
+                1 AS cell_count
+            FROM grid_cells
+            WHERE geom && ST_MakeEnvelope($3, $1, $4, $2, 4326)
+              AND aqi_value IS NOT NULL;
+        """
+        rows = await db.fetch(query, min_lat, max_lat, min_lon, max_lon)
+    else:
+        # row_idx/col_idx are plain ints, so integer division buckets
+        # each cell into its NxN block; GROUP BY then collapses each
+        # block into one averaged row. The bbox filter (index-assisted
+        # via the GIST index on geom) still runs first, so this only
+        # aggregates whatever's actually in view, not the whole table.
+        query = """
+            SELECT
+                NULL::bigint AS id,
+                AVG(ST_Y(ST_Centroid(geom))) AS center_lat,
+                AVG(ST_X(ST_Centroid(geom))) AS center_lon,
+                AVG(aqi_value) AS aqi_value,
+                COUNT(*)::int AS cell_count
+            FROM grid_cells
+            WHERE geom && ST_MakeEnvelope($3, $1, $4, $2, 4326)
+              AND aqi_value IS NOT NULL
+            GROUP BY (row_idx / $5), (col_idx / $5);
+        """
+        rows = await db.fetch(query, min_lat, max_lat, min_lon, max_lon, factor)
+
+    return {
+        "cells": [dict(row) for row in rows],
+        "cell_step_lat": GRID_STEP_LAT * factor,
+        "cell_step_lon": GRID_STEP_LON * factor,
+        "aggregation_factor": factor,
+    }
 
 
 async def get_blackspots_in_bbox(

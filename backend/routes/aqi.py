@@ -46,11 +46,16 @@ async def aqi_heatmap(
     max_lat: float = Query(..., ge=-90,  le=90),
     min_lon: float = Query(..., ge=-180, le=180),
     max_lon: float = Query(..., ge=-180, le=180),
+    zoom: Optional[int] = Query(None, ge=1, le=20,
+                                 description="Current map zoom — used to aggregate cells at wide zoom-out levels instead of returning every ~100m cell."),
 ):
     """
-    GeoJSON FeatureCollection of 100m grid cells with interpolated AQI.
+    AQI grid cells for a bounding box. No per-cell polygon geometry —
+    cells are uniform rectangles, so use metadata.cell_step_lat/lon to
+    build each cell's bounds from its center_lat/center_lon. At low
+    zoom, cells are pre-aggregated server-side (see metadata.aggregation_factor).
     """
-    cells = await get_aqi_heatmap(min_lat, max_lat, min_lon, max_lon)
+    result = await get_aqi_heatmap(min_lat, max_lat, min_lon, max_lon, zoom=zoom)
 
     features = [
         {
@@ -60,18 +65,21 @@ async def aqi_heatmap(
                 "aqi":        cell["aqi_value"],
                 "center_lat": cell["center_lat"],
                 "center_lon": cell["center_lon"],
+                "cell_count": cell["cell_count"],
             },
-            "geometry": cell["geometry"],
         }
-        for cell in cells
+        for cell in result["cells"]
     ]
 
     return {
         "type": "FeatureCollection",
         "features": features,
         "metadata": {
-            "bbox":       [min_lon, min_lat, max_lon, max_lat],
-            "cell_count": len(features),
+            "bbox":               [min_lon, min_lat, max_lon, max_lat],
+            "cell_count":         len(features),
+            "cell_step_lat":      result["cell_step_lat"],
+            "cell_step_lon":      result["cell_step_lon"],
+            "aggregation_factor": result["aggregation_factor"],
         },
     }
 

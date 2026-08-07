@@ -35,21 +35,28 @@ function aqiStroke(aqi, alpha = 0.18) {
 }
 
 /**
- * Draw a GeoJSON Polygon ring list onto ctx.
- * ring = [[lon, lat], [lon, lat], ...]
- * We call map.latLngToLayerPoint to stay in the layer-pane coordinate space,
- * which is consistent with the canvas position set via L.DomUtil.setPosition.
+ * Draw one grid cell as an axis-aligned rectangle, given its center and
+ * the (lat, lon) half-widths of a cell. Cells are uniform rectangles on
+ * a fixed grid, so this is all the geometry we ever need — no GeoJSON
+ * polygon coordinates required from the backend.
+ * We call map.latLngToLayerPoint to stay in the layer-pane coordinate
+ * space, which is consistent with the canvas position set via
+ * L.DomUtil.setPosition.
  */
-function drawRing(ctx, ring, map) {
-    if (!ring || ring.length < 2) return false;
+function drawCell(ctx, centerLat, centerLon, halfLat, halfLon, map) {
+    const corners = [
+        [centerLat - halfLat, centerLon - halfLon],
+        [centerLat - halfLat, centerLon + halfLon],
+        [centerLat + halfLat, centerLon + halfLon],
+        [centerLat + halfLat, centerLon - halfLon],
+    ];
     ctx.beginPath();
-    ring.forEach(([lon, lat], idx) => {
+    corners.forEach(([lat, lon], idx) => {
         const pt = map.latLngToLayerPoint([lat, lon]);
         if (idx === 0) ctx.moveTo(pt.x, pt.y);
         else ctx.lineTo(pt.x, pt.y);
     });
     ctx.closePath();
-    return true;
 }
 
 export default function AQIHeatmapLayer({ aqiData }) {
@@ -104,35 +111,27 @@ export default function AQIHeatmapLayer({ aqiData }) {
             const features = aqiData?.features;
             if (!features?.length) return;
 
+            // Half-widths of a cell in degrees — same for every feature
+            // in a given response, so computed once per draw rather than
+            // per cell. Falls back to the pre-optimization ~100m grid
+            // size if an older cached response predates this field.
+            const stepLat = aqiData?.metadata?.cell_step_lat ?? 0.0009;
+            const stepLon = aqiData?.metadata?.cell_step_lon ?? 0.00098;
+            const halfLat = stepLat / 2;
+            const halfLon = stepLon / 2;
+
             ctx.lineJoin = 'round';
             ctx.lineWidth = 0.6;
 
             for (const feature of features) {
-                const aqi      = feature.properties?.aqi;
-                const geom     = feature.geometry;
-                if (!geom) continue;
+                const p = feature.properties;
+                if (!p || p.center_lat == null || p.center_lon == null) continue;
 
-                ctx.fillStyle   = aqiFill(aqi);
-                ctx.strokeStyle = aqiStroke(aqi);
-
-                if (geom.type === 'Polygon') {
-                    // coordinates = [outerRing, ...holes]
-                    // outer ring = [[lon, lat], ...]
-                    const outer = geom.coordinates?.[0];
-                    if (drawRing(ctx, outer, map)) {
-                        ctx.fill();
-                        ctx.stroke();
-                    }
-                } else if (geom.type === 'MultiPolygon') {
-                    // coordinates = [polygon, ...] where polygon = [outerRing, ...holes]
-                    for (const polygon of geom.coordinates) {
-                        const outer = polygon?.[0];
-                        if (drawRing(ctx, outer, map)) {
-                            ctx.fill();
-                            ctx.stroke();
-                        }
-                    }
-                }
+                ctx.fillStyle   = aqiFill(p.aqi);
+                ctx.strokeStyle = aqiStroke(p.aqi);
+                drawCell(ctx, p.center_lat, p.center_lon, halfLat, halfLon, map);
+                ctx.fill();
+                ctx.stroke();
             }
         };
 

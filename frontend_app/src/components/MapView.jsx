@@ -213,6 +213,7 @@ function MapEvents({ onMapClick, onBoundsChange }) {
         onBoundsChange({
             north: b.getNorth(), south: b.getSouth(),
             east: b.getEast(), west: b.getWest(),
+            zoom: mapInstance.getZoom(),
         });
     }, [onBoundsChange]);
 

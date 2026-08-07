@@ -241,6 +241,7 @@ export default function App() {
                 min_lat: bounds.south, max_lat: bounds.north,
                 min_lon: bounds.west,  max_lon: bounds.east,
             });
+            if (bounds.zoom != null) p.set('zoom', Math.round(bounds.zoom));
             const resp = await fetch(`${API_BASE}/aqi/heatmap?${p}`);
             if (resp.ok) setAqiData(await resp.json());
         } catch (err) { console.warn('AQI fetch failed:', err.message); }
