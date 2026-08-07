@@ -46,7 +46,7 @@ async def aqi_heatmap(
     max_lat: float = Query(..., ge=-90,  le=90),
     min_lon: float = Query(..., ge=-180, le=180),
     max_lon: float = Query(..., ge=-180, le=180),
-    zoom: Optional[int] = Query(None, ge=1, le=20,
+    zoom: Optional[int] = Query(None, ge=0, le=20,
                                  description="Current map zoom — used to aggregate cells at wide zoom-out levels instead of returning every ~100m cell."),
 ):
     """
