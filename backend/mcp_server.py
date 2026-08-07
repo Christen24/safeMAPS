@@ -50,10 +50,12 @@ from spatial_queries import get_aqi_heatmap, get_blackspots_in_bbox
 from routes.aqi import list_stations
 from routes.route import _parse_hour
 
-# ── Ensure data_pipeline is importable (for LSTM predict) ───────────────
-_pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
-if str(_pipeline_dir) not in sys.path:
-    sys.path.insert(0, str(_pipeline_dir))
+# Ensure data_pipeline is importable both locally and inside Docker.
+_here = Path(__file__).resolve().parent
+for _candidate in (_here / "data_pipeline", _here.parent / "data_pipeline"):
+    if _candidate.exists() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
+        break
 
 
 # ── Lifecycle ────────────────────────────────────────────────────────────

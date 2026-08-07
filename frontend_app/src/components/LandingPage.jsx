@@ -92,7 +92,7 @@ const LandingPage = memo(function LandingPage({ onStart, onLaunchAI }) {
                     </button>
                     {onLaunchAI && (
                         <button className="landing-cta-ai" onClick={onLaunchAI}>
-                            <span>✦ Try Live AI Demo</span>
+                            <span>🧭 Plan Your Route</span>
                         </button>
                     )}
                     <button

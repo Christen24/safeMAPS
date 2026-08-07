@@ -25,7 +25,17 @@ from spatial_queries import get_aqi_heatmap
 router = APIRouter()
 
 # Path to trained model weights — used to check model existence
-_MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "data_pipeline" / "models"
+def _pipeline_dir() -> Path:
+    here = Path(__file__).resolve()
+    for candidate in (
+        here.parent.parent / "data_pipeline",
+        here.parent.parent.parent / "data_pipeline",
+    ):
+        if candidate.exists():
+            return candidate
+    return here.parent.parent / "data_pipeline"
+
+_MODELS_DIR = _pipeline_dir() / "models"
 
 
 # ── Existing endpoint ─────────────────────────────────────────────────
@@ -125,7 +135,7 @@ async def predict_aqi(
 
     # ── Fallback: inline inference ────────────────────────────────────
     import sys
-    pipeline_dir = Path(__file__).resolve().parent.parent.parent / "data_pipeline"
+    pipeline_dir = _pipeline_dir()
     if str(pipeline_dir) not in sys.path:
         sys.path.insert(0, str(pipeline_dir))
 

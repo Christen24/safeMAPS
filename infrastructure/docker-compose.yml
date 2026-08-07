@@ -73,7 +73,7 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
-      MCP_SERVER_URL: ${MCP_SERVER_URL:-}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp:8001/mcp}
       CORS_ORIGINS: "http://localhost:3000,http://frontend"
       BBOX_MIN_LAT: "12.75"
       BBOX_MAX_LAT: "13.25"
@@ -82,10 +82,45 @@ services:
     expose:
       - "8000"
     depends_on:
+      mcp:
+        condition: service_healthy
       pgbouncer:
         condition: service_healthy
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:8000/health || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  mcp:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.mcp
+    container_name: safemaps-mcp
+    environment:
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthroute
+      POSTGRES_USER: healthroute
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      WAQI_API_TOKEN: ${WAQI_API_TOKEN}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY}
+      CPCB_API_KEY: ${CPCB_API_KEY}
+      WAZE_CCP_URL: ${WAZE_CCP_URL:-}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      BBOX_MIN_LAT: "12.75"
+      BBOX_MAX_LAT: "13.25"
+      BBOX_MIN_LON: "77.35"
+      BBOX_MAX_LON: "77.90"
+      MCP_PORT: 8001
+    expose:
+      - "8001"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8001/health || exit 1" ]
       interval: 15s
       timeout: 10s
       retries: 10

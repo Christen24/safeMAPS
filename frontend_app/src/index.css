@@ -1859,6 +1859,39 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
   border-color: var(--border-med);
 }
 
+.landing-cta-ai {
+  padding: 13px 28px;
+  background: transparent;
+  border: 1px solid var(--violet);
+  border-radius: var(--r-sm);
+  color: var(--violet);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: var(--ease-smooth);
+  position: relative;
+  overflow: hidden;
+}
+.landing-cta-ai::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--violet);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--ease-smooth);
+  z-index: 0;
+}
+.landing-cta-ai span { position: relative; z-index: 1; }
+.landing-cta-ai:hover {
+  color: var(--void);
+  box-shadow: 0 0 20px rgba(155, 135, 232, 0.32), 0 0 50px rgba(155, 135, 232, 0.10);
+}
+.landing-cta-ai:hover::before { transform: scaleX(1); }
+
 /* Stats strip — with animated top border */
 .landing-stats {
   display: flex;
@@ -3568,51 +3601,114 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 .ai-tools-menu li:hover { background: var(--surface-2); color: var(--text-primary); }
 
 /* The map itself fills remaining space */
-.ai-map-panel > div:last-child,
-.ai-map-panel .leaflet-container {
-    flex: 1 !important;
-    min-height: 0 !important;
+.ai-map {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+.ai-map .leaflet-container {
+    height: 100%;
+    width: 100%;
+    background: var(--void);
+}
+.ai-map-empty {
+    position: absolute;
+    inset: 0;
+    z-index: 400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    text-align: center;
+    background: rgba(13, 19, 34, 0.55);
+    backdrop-filter: blur(2px);
+    pointer-events: none;
+}
+.ai-map-empty span {
+    max-width: 320px;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
 }
 
 /* ── Tool call cards ───────────────────────────────────────── */
-.tool-call-card {
+/* Matches the actual classes ToolCallCard.jsx renders
+   (.ai-tool-*) — a previous pass here styled .tool-call-card /
+   .tool-name / .tool-status-dot / .tool-meta, which don't exist
+   anywhere in the component, so cards rendered fully unstyled. */
+.ai-tool-card {
     background: var(--surface-1);
     border: 1px solid var(--border-dim);
-    border-left: 3px solid var(--ice);
+    border-left: 3px solid var(--amber);
     border-radius: var(--r-md);
-    padding: 0.6rem 0.8rem;
+    overflow: hidden;
     font-family: var(--font-mono);
     font-size: 0.72rem;
     color: var(--text-secondary);
     transition: border-color var(--ease-snap);
 }
-.tool-call-card.running  { border-left-color: var(--amber); }
-.tool-call-card.completed { border-left-color: var(--acid); }
-.tool-call-card.failed    { border-left-color: var(--infra); }
+.ai-tool-card.completed { border-left-color: var(--acid); }
+.ai-tool-card.failed { border-left-color: var(--infra); }
 
-.tool-call-card .tool-name {
-    color: var(--text-primary);
-    font-weight: 600;
-    font-size: 0.75rem;
+.ai-tool-head {
+    width: 100%;
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 0.25rem;
+    padding: 0.5rem 0.7rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
 }
-.tool-call-card .tool-status-dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--amber);
+.ai-tool-state {
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--amber-mute);
+    color: var(--amber);
     flex-shrink: 0;
 }
-.tool-call-card.completed .tool-status-dot { background: var(--acid); box-shadow: 0 0 6px rgba(78,203,141,0.5); }
-.tool-call-card.failed    .tool-status-dot { background: var(--infra); }
-.tool-call-card.running   .tool-status-dot { animation: ai-blink 0.9s ease-in-out infinite; }
+.ai-tool-card.completed .ai-tool-state { background: var(--acid-mute); color: var(--acid); }
+.ai-tool-card.failed .ai-tool-state { background: var(--infra-mute); color: var(--infra); }
 
-.tool-call-card .tool-meta {
+.ai-tool-name {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.75rem;
+    flex: 1;
+}
+.ai-tool-time {
     color: var(--text-tertiary);
     font-size: 0.67rem;
-    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+.ai-tool-args {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.9rem;
+    padding: 0 0.7rem 0.6rem;
+}
+.ai-tool-args span { font-size: 0.68rem; color: var(--text-secondary); }
+.ai-tool-args b { color: var(--text-tertiary); font-weight: 600; margin-right: 3px; }
+
+.ai-tool-result {
+    margin: 0;
+    padding: 0.6rem 0.7rem;
+    background: var(--void);
+    border-top: 1px solid var(--border-dim);
+    font-size: 0.68rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 /* Responsive: stack on narrow screens */
