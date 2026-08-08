@@ -24,12 +24,10 @@ function aqiToRGB(aqi) {
     return lo[1].map((c, i) => Math.round(c + (hi[1][i] - c) * t));
 }
 
-function aqiFill(aqi, alpha = 0.52) {
-    const [r, g, b] = aqiToRGB(aqi);
-    return `rgba(${r},${g},${b},${alpha})`;
-}
-
-function aqiStroke(aqi, alpha = 0.18) {
+// Bumped from 0.52 — the blur pass (below) softens perceived saturation
+// by spreading each cell's colour into its neighbours, so the pre-blur
+// fill needs to run a bit richer to land at a similar final intensity.
+function aqiFill(aqi, alpha = 0.62) {
     const [r, g, b] = aqiToRGB(aqi);
     return `rgba(${r},${g},${b},${alpha})`;
 }
@@ -59,9 +57,36 @@ function drawCell(ctx, centerLat, centerLon, halfLat, halfLon, map) {
     ctx.closePath();
 }
 
+/**
+ * 1 in the interior of the fetched bbox, ramping linearly down to 0 at
+ * the very edge (within the outer `fadeFraction` of the bbox's span).
+ * Without this the overlay stops dead at the query boundary — a hard
+ * rectangle instead of the soft, edge-to-edge wash Google's overlay has.
+ * Combined with padding the fetch itself (see MapView.jsx's emitBounds),
+ * this fade zone normally sits outside the visible viewport, so in
+ * practice you only see it if you pan right up to the edge of loaded data.
+ */
+function edgeFadeFactor(lat, lon, bbox, fadeFraction = 0.10) {
+    if (!bbox) return 1;
+    const [minLon, minLat, maxLon, maxLat] = bbox;
+    const lonSpan = (maxLon - minLon) || 1;
+    const latSpan = (maxLat - minLat) || 1;
+    const distLon = Math.min(lon - minLon, maxLon - lon) / lonSpan;
+    const distLat = Math.min(lat - minLat, maxLat - lat) / latSpan;
+    const fadeLon = Math.max(0, Math.min(1, distLon / fadeFraction));
+    const fadeLat = Math.max(0, Math.min(1, distLat / fadeFraction));
+    return Math.min(fadeLon, fadeLat);
+}
+
 export default function AQIHeatmapLayer({ aqiData }) {
     const map = useMap();
     const canvasRef = useRef(null);
+    // Offscreen buffer: cells are drawn here crisp/unblurred, then
+    // composited onto the visible canvas through a single blur filter.
+    // One blur of the whole composited image (not one blur per cell)
+    // keeps this cheap regardless of cell count — a single GPU-accelerated
+    // drawImage call, same cost whether there are 200 cells or 100,000.
+    const bufferRef = useRef(null);
     const frameRef = useRef(null);
 
     // ── Mount canvas into the overlay pane once ───────────────────────
@@ -74,27 +99,30 @@ export default function AQIHeatmapLayer({ aqiData }) {
             'z-index:320',
             'opacity:0.88',
             // No mixBlendMode — 'multiply' kills colours on dark satellite tiles.
-            // No element-level blur — blurs crisp cell boundaries and bleeds colours.
         ].join(';');
         map.getPanes().overlayPane.appendChild(canvas);
+
+        bufferRef.current = document.createElement('canvas'); // detached, never mounted
 
         return () => {
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
             canvas.remove();
             canvasRef.current = null;
+            bufferRef.current = null;
         };
     }, [map]);
 
     // ── Redraw on data or map view change ─────────────────────────────
     useEffect(() => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        const buffer = bufferRef.current;
+        if (!canvas || !buffer) return;
 
         const draw = () => {
-            const size   = map.getSize();
-            const dpr    = window.devicePixelRatio || 1;
+            const size = map.getSize();
+            const dpr  = window.devicePixelRatio || 1;
 
-            // Position the canvas at the layer-pane origin.
+            // Position the visible canvas at the layer-pane origin.
             // latLngToLayerPoint uses the same coordinate space, so cells land exactly.
             const topLeft = map.containerPointToLayerPoint([0, 0]);
             L.DomUtil.setPosition(canvas, topLeft);
@@ -103,6 +131,8 @@ export default function AQIHeatmapLayer({ aqiData }) {
             canvas.height = size.y * dpr;
             canvas.style.width  = `${size.x}px`;
             canvas.style.height = `${size.y}px`;
+            buffer.width  = canvas.width;
+            buffer.height = canvas.height;
 
             const ctx = canvas.getContext('2d');
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -110,6 +140,10 @@ export default function AQIHeatmapLayer({ aqiData }) {
 
             const features = aqiData?.features;
             if (!features?.length) return;
+
+            const bctx = buffer.getContext('2d');
+            bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            bctx.clearRect(0, 0, size.x, size.y);
 
             // Half-widths of a cell in degrees — same for every feature
             // in a given response, so computed once per draw rather than
@@ -119,20 +153,43 @@ export default function AQIHeatmapLayer({ aqiData }) {
             const stepLon = aqiData?.metadata?.cell_step_lon ?? 0.00098;
             const halfLat = stepLat / 2;
             const halfLon = stepLon / 2;
+            const bbox = aqiData?.metadata?.bbox; // [minLon, minLat, maxLon, maxLat]
 
-            ctx.lineJoin = 'round';
-            ctx.lineWidth = 0.6;
+            // Blur radius scales with on-screen cell size: enough to melt
+            // adjacent cells into a continuous gradient without smearing
+            // away real spatial detail when zoomed in close. Estimated
+            // from actual projected pixel width of one cell at the
+            // current view, not from zoom level directly, since that
+            // stays correct regardless of the server-side aggregation
+            // factor in play.
+            let blurPx = 14;
+            if (features[0]?.properties) {
+                const p0 = features[0].properties;
+                const a = map.latLngToLayerPoint([p0.center_lat, p0.center_lon]);
+                const b = map.latLngToLayerPoint([p0.center_lat, p0.center_lon + stepLon]);
+                const cellPx = Math.abs(b.x - a.x);
+                blurPx = Math.max(8, Math.min(cellPx * 1.15, 46));
+            }
 
             for (const feature of features) {
                 const p = feature.properties;
                 if (!p || p.center_lat == null || p.center_lon == null) continue;
 
-                ctx.fillStyle   = aqiFill(p.aqi);
-                ctx.strokeStyle = aqiStroke(p.aqi);
-                drawCell(ctx, p.center_lat, p.center_lon, halfLat, halfLon, map);
-                ctx.fill();
-                ctx.stroke();
+                const fade = edgeFadeFactor(p.center_lat, p.center_lon, bbox);
+                if (fade <= 0) continue;
+
+                bctx.fillStyle = aqiFill(p.aqi, 0.62 * fade);
+                drawCell(bctx, p.center_lat, p.center_lon, halfLat, halfLon, map);
+                bctx.fill();
             }
+
+            // Single blur pass over the whole composited buffer — this is
+            // what turns a mosaic of flat-coloured rectangles into the
+            // soft, seamless gradient look, and it costs one drawImage
+            // call regardless of how many cells were drawn into it.
+            ctx.filter = `blur(${blurPx}px)`;
+            ctx.drawImage(buffer, 0, 0, size.x, size.y);
+            ctx.filter = 'none';
         };
 
         const schedule = () => {

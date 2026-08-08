@@ -209,7 +209,11 @@ function buildTrafficColoredSegments(segments) {
 function MapEvents({ onMapClick, onBoundsChange }) {
     const debounceRef = useRef(null);
     const emitBounds = useCallback((mapInstance) => {
-        const b = mapInstance.getBounds();
+        // Padded beyond the visible viewport so AQIHeatmapLayer's edge-fade
+        // zone (see edgeFadeFactor) sits outside what's actually on screen
+        // under normal panning — otherwise the fade itself becomes visible
+        // as a soft-but-still-noticeable rectangle right at the viewport edge.
+        const b = mapInstance.getBounds().pad(0.25);
         onBoundsChange({
             north: b.getNorth(), south: b.getSouth(),
             east: b.getEast(), west: b.getWest(),
