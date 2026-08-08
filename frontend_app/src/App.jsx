@@ -138,6 +138,7 @@ export default function App() {
     // ── Stable refs so callbacks don't recreate on every state change ─
     const showAQIRef    = useRef(showAQI);
     const fetchAQIRef   = useRef(null);
+    const aqiAbortRef   = useRef(null); // cancels a superseded in-flight AQI fetch — see fetchAQI
     const originRef     = useRef(origin);
     const destinationRef = useRef(destination);
     const selectedRouteRef = useRef(null);
@@ -235,6 +236,21 @@ export default function App() {
     // Keep fetchAQIRef in sync so handleBoundsChange can call latest version
     const fetchAQI = useCallback(async (bounds) => {
         if (!bounds) return;
+
+        // Cancel any still-in-flight AQI request before starting a new
+        // one. Without this, rapid pan/zoom can leave two requests in
+        // flight at once — e.g. one for a small, zoomed-in bbox and one
+        // for a much wider zoomed-out bbox. If the OLDER (smaller-area)
+        // request happens to resolve AFTER the newer one — easily
+        // happens, timing isn't guaranteed to match request order — its
+        // stale, wrongly-positioned data overwrites the correct one,
+        // which shows up as the AQI layer sitting in one corner instead
+        // of covering the current view. This only happens when timing
+        // works out that way, which is exactly why it was intermittent.
+        if (aqiAbortRef.current) aqiAbortRef.current.abort();
+        const controller = new AbortController();
+        aqiAbortRef.current = controller;
+
         setLoadingAQI(true);
         try {
             const p = new URLSearchParams({
@@ -242,10 +258,18 @@ export default function App() {
                 min_lon: bounds.west,  max_lon: bounds.east,
             });
             if (bounds.zoom != null) p.set('zoom', Math.round(bounds.zoom));
-            const resp = await fetch(`${API_BASE}/aqi/heatmap?${p}`);
+            const resp = await fetch(`${API_BASE}/aqi/heatmap?${p}`, { signal: controller.signal });
             if (resp.ok) setAqiData(await resp.json());
-        } catch (err) { console.warn('AQI fetch failed:', err.message); }
-        finally { setLoadingAQI(false); }
+        } catch (err) {
+            // AbortError means this request was superseded by a newer
+            // one, not a real failure — nothing to warn about.
+            if (err.name !== 'AbortError') console.warn('AQI fetch failed:', err.message);
+        } finally {
+            // Only clear the loading flag if this request is still the
+            // active one — a superseded request finishing its cleanup
+            // shouldn't stomp on a newer request's loading=true state.
+            if (aqiAbortRef.current === controller) setLoadingAQI(false);
+        }
     }, []);
     // keep fetchAQIRef in sync so handleBoundsChange can call latest version
     useEffect(() => { fetchAQIRef.current = fetchAQI; }, [fetchAQI]);
