@@ -2,6 +2,10 @@ import { useEffect, useRef } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 
+// TEMP DIAGNOSTIC — matches App.jsx/MapView.jsx's DEBUG_AQI. Remove
+// together once the "cornering" report is root-caused.
+const DEBUG_AQI = true;
+
 // ── AQI colour scale (matches MapView aqiColor) ───────────────────────
 const STOPS = [
     [0,   [78,  203, 141]],   // Good — #4ecb8d
@@ -140,6 +144,21 @@ export default function AQIHeatmapLayer({ aqiData }) {
 
             const features = aqiData?.features;
             if (!features?.length) return;
+
+            if (DEBUG_AQI && aqiData?.metadata?.bbox) {
+                const [dMinLon, dMinLat, dMaxLon, dMaxLat] = aqiData.metadata.bbox;
+                const vb = map.getBounds();
+                const covers =
+                    dMinLon <= vb.getWest() && dMaxLon >= vb.getEast() &&
+                    dMinLat <= vb.getSouth() && dMaxLat >= vb.getNorth();
+                console.log('[AQI DEBUG] draw() — data bbox vs visible viewport', {
+                    dataBbox: aqiData.metadata.bbox,
+                    visibleBbox: [vb.getWest(), vb.getSouth(), vb.getEast(), vb.getNorth()],
+                    dataCoversVisibleViewport: covers,
+                    featureCount: features.length,
+                    zoom: map.getZoom(),
+                });
+            }
 
             const bctx = buffer.getContext('2d');
             bctx.setTransform(dpr, 0, 0, dpr, 0, 0);

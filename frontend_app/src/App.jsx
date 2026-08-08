@@ -11,6 +11,10 @@ import './index.css';
 
 const API_BASE = '/api';
 
+// TEMP DIAGNOSTIC — remove once the AQI "cornering" report is root-caused.
+// Flip to false (or delete the guarded logs) once confirmed fixed.
+const DEBUG_AQI = true;
+
 const PRESET_WEIGHTS = {
     fastest:    { alpha: 1.0, beta: 0.0, gamma: 0.0 },
     safest:     { alpha: 0.2, beta: 0.1, gamma: 0.7 },
@@ -250,6 +254,10 @@ export default function App() {
         if (aqiAbortRef.current) aqiAbortRef.current.abort();
         const controller = new AbortController();
         aqiAbortRef.current = controller;
+        const reqId = Date.now() % 100000; // short id, just for matching log lines
+
+        if (DEBUG_AQI) console.log(`[AQI DEBUG] #${reqId} REQUEST start — bbox:`,
+            { south: bounds.south, north: bounds.north, west: bounds.west, east: bounds.east, zoom: bounds.zoom });
 
         setLoadingAQI(true);
         try {
@@ -259,11 +267,22 @@ export default function App() {
             });
             if (bounds.zoom != null) p.set('zoom', Math.round(bounds.zoom));
             const resp = await fetch(`${API_BASE}/aqi/heatmap?${p}`, { signal: controller.signal });
-            if (resp.ok) setAqiData(await resp.json());
+            if (resp.ok) {
+                const data = await resp.json();
+                if (DEBUG_AQI) console.log(`[AQI DEBUG] #${reqId} REQUEST won — applying`,
+                    { cell_count: data?.metadata?.cell_count, bbox: data?.metadata?.bbox, aggregation_factor: data?.metadata?.aggregation_factor });
+                setAqiData(data);
+            } else if (DEBUG_AQI) {
+                console.log(`[AQI DEBUG] #${reqId} REQUEST failed — HTTP ${resp.status}`);
+            }
         } catch (err) {
             // AbortError means this request was superseded by a newer
             // one, not a real failure — nothing to warn about.
-            if (err.name !== 'AbortError') console.warn('AQI fetch failed:', err.message);
+            if (err.name === 'AbortError') {
+                if (DEBUG_AQI) console.log(`[AQI DEBUG] #${reqId} REQUEST aborted (superseded)`);
+            } else {
+                console.warn('AQI fetch failed:', err.message);
+            }
         } finally {
             // Only clear the loading flag if this request is still the
             // active one — a superseded request finishing its cleanup
@@ -279,7 +298,11 @@ export default function App() {
     // showAQI toggle, which was the root cause of React error #310.
     const handleBoundsChange = useCallback((bounds) => {
         setMapBounds(bounds);
-        if (showAQIRef.current && fetchAQIRef.current) fetchAQIRef.current(bounds);
+        const willFetch = showAQIRef.current && fetchAQIRef.current;
+        if (DEBUG_AQI) console.log('[AQI DEBUG] handleBoundsChange', {
+            zoom: bounds?.zoom, showAQI: showAQIRef.current, willFetch: !!willFetch,
+        });
+        if (willFetch) fetchAQIRef.current(bounds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);  // intentionally empty — reads mutable refs
 

@@ -7,6 +7,11 @@ import {
 import AQIHeatmapLayer from './AQIHeatmapLayer';
 import { buildMetroLines, buildMetroStations, METRO_LINE_COLORS } from '../data/nammaMetro';
 
+// TEMP DIAGNOSTIC — matches the same flag in App.jsx, kept local here to
+// avoid a cross-file import for what's meant to be temporary. Remove
+// alongside App.jsx's DEBUG_AQI once the "cornering" report is root-caused.
+const DEBUG_AQI = true;
+
 // (AQILayer + useMapZoom removed — replaced by canvas-based AQIHeatmapLayer)
 import L from 'leaflet';
 
@@ -214,16 +219,23 @@ function MapEvents({ onMapClick, onBoundsChange }) {
         // under normal panning — otherwise the fade itself becomes visible
         // as a soft-but-still-noticeable rectangle right at the viewport edge.
         const b = mapInstance.getBounds().pad(0.25);
-        onBoundsChange({
+        const bounds = {
             north: b.getNorth(), south: b.getSouth(),
             east: b.getEast(), west: b.getWest(),
             zoom: mapInstance.getZoom(),
+        };
+        if (DEBUG_AQI) console.log('[AQI DEBUG] emitBounds firing (debounce settled)', {
+            zoom: bounds.zoom,
+            rawBounds: mapInstance.getBounds().toBBoxString(),
         });
+        onBoundsChange(bounds);
     }, [onBoundsChange]);
 
     const map = useMapEvents({
         click(e) { onMapClick(e.latlng); },
         moveend() {
+            if (DEBUG_AQI) console.log('[AQI DEBUG] moveend fired, zoom=', map.getZoom(),
+                '— (re)starting 500ms debounce');
             if (debounceRef.current) clearTimeout(debounceRef.current);
             debounceRef.current = setTimeout(() => emitBounds(map), 500);
         },
