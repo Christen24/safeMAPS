@@ -79,13 +79,6 @@ const LandingPage = memo(function LandingPage({ onStart, onLaunchAI }) {
                     the route that's genuinely better for your body.
                 </p>
 
-                <div className="landing-pills fade-in-up" style={{ animationDelay: '0.20s' }}>
-                    <span className="landing-pill">🔀 BiDir A*</span>
-                    <span className="landing-pill">📡 Live Incidents</span>
-                    <span className="landing-pill">📲 PWA Ready</span>
-                    <span className="landing-pill">🔗 Shareable Routes</span>
-                </div>
-
                 <div className="landing-ctas fade-in-up" style={{ animationDelay: '0.28s' }}>
                     <button className="landing-cta-primary" onClick={onStart}>
                         <span>▶ Launch Dashboard</span>
