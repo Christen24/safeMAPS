@@ -73,7 +73,7 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
-      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp:8001/mcp}
+      MCP_SERVER_URL: "http://mcp:8001/mcp"
       CORS_ORIGINS: "http://localhost:3000,http://frontend"
       BBOX_MIN_LAT: "12.75"
       BBOX_MAX_LAT: "13.25"
