@@ -675,7 +675,7 @@ export default function MapView({
                     className={`map-control-btn incident-btn ${showIncidents ? 'active' : ''} ${loadingIncidents ? 'loading' : ''}`}
                     onClick={() => setShowIncidents(!showIncidents)}
                 >
-                    ▲ Live Incidents
+                    ▲ BTP Incidents
                     {incidentData?.total > 0 && (
                         <span className="incident-badge">{incidentData.total}</span>
                     )}

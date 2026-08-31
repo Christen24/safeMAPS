@@ -1,33 +1,21 @@
 """
 SafeMAPS — Live Incident Scraper
 
-Three-source incident pipeline covering ~80% of ASTraM's incident data:
+One-source incident pipeline covering BTP's incident data:
 
-Source 1 — OSM Overpass API (real-time, free, no key)
-    Queries hazard, accident, road_closure, construction nodes
-    within the Bangalore bounding box. Updates every 10 min.
-
-Source 2 — Waze CCP (Connected Citizens Program)
-    Waze's public GeoJSON feed for registered cities.
-    Bangalore is included. Register at:
-    https://developers.google.com/waze/data-feed/get-started
-    Set WAZE_CCP_URL in .env when approved.
-    Falls back gracefully to OSM-only until URL is set.
-
-Source 3 — @BlrCityTraffic (BTP Twitter feed)
+Source 1 — @BlrCityTraffic (BTP Twitter feed)
     Parses BTP's incident tweets with regex + Nominatim geocoding.
     Requires X_BEARER_TOKEN in .env (free tier: 1500 tweets/month).
     Falls back gracefully if not set.
 
 Deduplication:
-    Incidents from all three sources are merged spatially.
+    Incidents are merged spatially.
     Any two incidents within 100m of each other are treated as the same
     event; the highest-severity reading wins.
 
 Expiry:
     Incidents are marked is_active=FALSE when expires_at passes.
     Default TTL: 2 hours (configurable per-source).
-    Waze incidents use the TTL from the feed when available.
 """
 
 import asyncio
@@ -75,147 +63,6 @@ def _in_bbox(lat: float, lon: float) -> bool:
     return (BBOX["min_lat"] <= lat <= BBOX["max_lat"] and
             BBOX["min_lon"] <= lon <= BBOX["max_lon"])
 
-
-# ── Source 1: OSM Overpass ────────────────────────────────────────────
-
-_bbox_str = f"{BBOX['min_lat']},{BBOX['min_lon']},{BBOX['max_lat']},{BBOX['max_lon']}"
-_OVERPASS_QUERY = f"""
-[out:json][timeout:20];
-(
-  node["hazard"]({_bbox_str});
-  node["accident"]({_bbox_str});
-  node["highway"="road_closure"]({_bbox_str});
-  node["construction"]({_bbox_str});
-  way["highway"="construction"]({_bbox_str});
-);
-out center;
-"""
-
-_OSM_TYPE_MAP = {
-    "accident":     ("accident",     2),
-    "hazard":       ("hazard",       1),
-    "road_closure": ("closure",      3),
-    "construction": ("construction", 1),
-}
-
-
-async def fetch_osm_incidents() -> list[dict]:
-    """Query OSM Overpass for real-time incidents in Bangalore bbox."""
-    try:
-        async with httpx.AsyncClient(timeout=25) as client:
-            resp = await client.post(
-                OVERPASS_URL,
-                data={"data": _OVERPASS_QUERY},
-                headers={"User-Agent": "SafeMAPS/1.0 (research)"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as exc:
-        logger.warning(f"[incidents/osm] Overpass fetch failed: {exc}")
-        return []
-
-    incidents = []
-    now = datetime.now(timezone.utc)
-    for el in data.get("elements", []):
-        lat = el.get("lat") or el.get("center", {}).get("lat")
-        lon = el.get("lon") or el.get("center", {}).get("lon")
-        if not (lat and lon and _in_bbox(float(lat), float(lon))):
-            continue
-
-        tags = el.get("tags", {})
-        inc_type, severity = "hazard", 1
-        for tag_key, (mapped_type, mapped_sev) in _OSM_TYPE_MAP.items():
-            if tag_key in tags:
-                inc_type, severity = mapped_type, mapped_sev
-                break
-
-        incidents.append({
-            "source":        "osm",
-            "incident_type": inc_type,
-            "lat":           float(lat),
-            "lon":           float(lon),
-            "severity":      severity,
-            "description":   tags.get("name") or tags.get("description", ""),
-            "external_id":   f"{el['type']}/{el['id']}",
-            "expires_at":    now + timedelta(hours=INCIDENT_TTL_H),
-        })
-
-    logger.info(f"[incidents/osm] {len(incidents)} incidents fetched.")
-    return incidents
-
-
-# ── Source 2: Waze CCP ────────────────────────────────────────────────
-
-_WAZE_TYPE_MAP = {
-    "ACCIDENT":     ("accident",     2),
-    "JAM":          ("closure",      2),
-    "ROAD_CLOSED":  ("closure",      3),
-    "CONSTRUCTION": ("construction", 1),
-    "HAZARD":       ("hazard",       1),
-}
-
-
-async def fetch_waze_incidents(ccp_url: str) -> list[dict]:
-    """
-    Fetch incidents from Waze Connected Citizens Program GeoJSON feed.
-    ccp_url: provided after CCP registration — set as WAZE_CCP_URL in .env.
-    """
-    if not ccp_url:
-        return []
-
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(
-                ccp_url,
-                headers={"User-Agent": "SafeMAPS/1.0 (research)"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as exc:
-        logger.warning(f"[incidents/waze] Waze CCP fetch failed: {exc}")
-        return []
-
-    incidents = []
-    now = datetime.now(timezone.utc)
-    alerts = data.get("alerts", []) or data.get("features", [])
-
-    for alert in alerts:
-        # Handle both raw CCP format and GeoJSON Feature format
-        if "geometry" in alert:
-            coords = alert["geometry"]["coordinates"]
-            lon, lat = float(coords[0]), float(coords[1])
-            props = alert.get("properties", alert)
-        else:
-            lat = float(alert.get("location", {}).get("y", 0))
-            lon = float(alert.get("location", {}).get("x", 0))
-            props = alert
-
-        if not _in_bbox(lat, lon):
-            continue
-
-        waze_type = (props.get("type") or "HAZARD").upper()
-        inc_type, severity = _WAZE_TYPE_MAP.get(waze_type, ("hazard", 1))
-
-        # Use Waze's pubMillis for expiry if available
-        pub_ms = props.get("pubMillis")
-        if pub_ms:
-            reported = datetime.fromtimestamp(pub_ms / 1000, tz=timezone.utc)
-        else:
-            reported = now
-
-        incidents.append({
-            "source":        "waze",
-            "incident_type": inc_type,
-            "lat":           lat,
-            "lon":           lon,
-            "severity":      severity,
-            "description":   props.get("street", "") or props.get("description", ""),
-            "external_id":   str(props.get("uuid") or props.get("id", "")),
-            "expires_at":    reported + timedelta(hours=INCIDENT_TTL_H),
-        })
-
-    logger.info(f"[incidents/waze] {len(incidents)} incidents fetched.")
-    return incidents
 
 
 # ── Source 3: BTP Twitter / @BlrCityTraffic ───────────────────────────
@@ -466,18 +313,9 @@ async def scrape_incidents() -> tuple[int, int]:
 
     Returns: (inserted_count, expired_count)
     """
-    waze_url     = getattr(settings, "waze_ccp_url",    None)
     x_token      = getattr(settings, "x_bearer_token",  None)
 
-    osm_task     = fetch_osm_incidents()
-    waze_task    = fetch_waze_incidents(waze_url or "")
-    twitter_task = fetch_twitter_incidents(x_token or "")
-
-    osm_inc, waze_inc, twitter_inc = await asyncio.gather(
-        osm_task, waze_task, twitter_task,
-    )
-
-    all_incidents = osm_inc + waze_inc + twitter_inc
+    all_incidents = await fetch_twitter_incidents(x_token or "")
     deduped       = deduplicate_incidents(all_incidents)
 
     conn = await asyncpg.connect(

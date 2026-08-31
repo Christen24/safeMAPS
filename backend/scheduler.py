@@ -188,7 +188,7 @@ async def run_cpcb_cycle() -> None:
 
 async def run_incident_cycle() -> None:
     """
-    Scrape OSM Overpass, Waze CCP, and @BlrCityTraffic for live incidents.
+    Scrape @BlrCityTraffic for live incidents.
     Deduplicates by 100m spatial proximity, writes to live_incidents table,
     then refreshes edge_incident costs in the graph cache.
     """
@@ -302,7 +302,7 @@ def start_scheduler() -> AsyncIOScheduler:
         run_incident_cycle,
         trigger="interval", minutes=10,
         id="incident_scrape",
-        name="Live incident scrape (OSM+Waze+Twitter)",
+        name="Live incident scrape (Twitter)",
         next_run_time=_now_plus(minutes=3),
     )
 

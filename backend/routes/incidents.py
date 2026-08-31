@@ -2,9 +2,9 @@
 SafeMAPS — Live Incidents API Router
 
 Endpoints:
-    GET /api/incidents/active        — all active incidents as GeoJSON FeatureCollection
+    GET /api/incidents/active        — all active BTP incidents as GeoJSON FeatureCollection
     GET /api/incidents/active?type=  — filtered by incident_type (accident, closure, ...)
-    GET /api/incidents/active?source=— filtered by source (osm, waze, twitter)
+    GET /api/incidents/active?source=— filtered by source (only 'twitter' is valid now)
     POST /api/admin/expire-incidents — manually expire stale incidents (admin only)
 """
 
@@ -41,8 +41,8 @@ async def get_active_incidents(
         description="Filter by incident type: accident, closure, waterlogging, construction, hazard",
     ),
     source: Optional[str] = Query(
-        default=None,
-        description="Filter by source: osm, waze, twitter",
+        default="twitter",
+        description="Filter by source (now enforced to 'twitter' for BTP only)",
     ),
     limit: int = Query(default=500, ge=1, le=2000),
 ) -> IncidentLayerResponse:
@@ -62,8 +62,12 @@ async def get_active_incidents(
         params.append(incident_type.lower())
         conditions.append(f"incident_type = ${len(params)}")
 
-    if source:
-        params.append(source.lower())
+    if source and source.lower() == "twitter":
+        params.append("twitter")
+        conditions.append(f"source = ${len(params)}")
+    else:
+        # Enforce twitter as the only valid source
+        params.append("twitter")
         conditions.append(f"source = ${len(params)}")
 
     where = " AND ".join(conditions)
