@@ -474,6 +474,22 @@ async def predict_aqi_near(
 # ── Entry point ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # host/port are set on the FastMCP constructor above — run() only
-    # accepts `transport` (and `mount_path` for sse).
-    mcp.run(transport="streamable-http")
+    # FastMCP's streamable-http transport silently ignores the user-provided
+    # lifespan argument. To ensure the graph loads, we extract the Starlette
+    # app, wrap its lifespan, and run it via uvicorn directly.
+    app = mcp.streamable_http_app()
+    original_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def wrapped_lifespan(app_instance):
+        async with original_lifespan(app_instance):
+            # Our custom startup logic
+            await db.connect()
+            node_count = await graph_cache.load(db)
+            print(f"[safemaps-mcp] graph loaded: {node_count:,} nodes", flush=True)
+            yield
+
+    app.router.lifespan_context = wrapped_lifespan
+
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("MCP_PORT", "8001")))
