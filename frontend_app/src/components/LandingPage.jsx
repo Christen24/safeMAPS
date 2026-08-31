@@ -114,9 +114,6 @@ const LandingPage = memo(function LandingPage({ onStart, onLaunchAI }) {
             <div className="features-section">
                 <div className="features-header">
                     <div className="features-title">System Capabilities</div>
-                    <div className="features-subtitle">
-                        Every module runs independently and degrades gracefully when data sources are unavailable.
-                    </div>
                 </div>
                 <div className="features-grid">
                     {FEATURES.map((f) => (
@@ -131,7 +128,7 @@ const LandingPage = memo(function LandingPage({ onStart, onLaunchAI }) {
             </div>
 
             <div className="landing-footer">
-                SAFEMAPS · Bengaluru · OSM · CPCB · WAQI · BiDir A* · MIT License
+                
             </div>
         </div>
     );
