@@ -24,7 +24,9 @@ RUN for i in 1 2 3 4 5; do \
 COPY backend/requirements.txt .
 
 # Install CPU-only PyTorch first to prevent downloading the huge ~2GB CUDA wheel
-RUN pip install --no-cache-dir "torch>=2.2.0" --index-url https://download.pytorch.org/whl/cpu \
+RUN for i in 1 2 3 4 5; do \
+    pip install --no-cache-dir --default-timeout 100 "torch>=2.2.0" --index-url https://download.pytorch.org/whl/cpu \
+    && break || echo "PyTorch download failed, retrying in 5s..." && sleep 5; done \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
