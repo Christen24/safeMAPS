@@ -30,7 +30,9 @@ async def run_aqi_cycle() -> None:
     try:
         import sys
         from pathlib import Path
-        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        pipeline_dir = Path(__file__).resolve().parent / "data_pipeline"
+        if not pipeline_dir.exists():
+            pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
         if str(pipeline_dir) not in sys.path:
             sys.path.insert(0, str(pipeline_dir))
 
@@ -52,7 +54,9 @@ async def run_traffic_cycle() -> None:
     try:
         import sys
         from pathlib import Path
-        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        pipeline_dir = Path(__file__).resolve().parent / "data_pipeline"
+        if not pipeline_dir.exists():
+            pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
         if str(pipeline_dir) not in sys.path:
             sys.path.insert(0, str(pipeline_dir))
 
@@ -81,7 +85,9 @@ async def run_lstm_predict_cycle() -> None:
     try:
         import sys
         from pathlib import Path
-        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        pipeline_dir = Path(__file__).resolve().parent / "data_pipeline"
+        if not pipeline_dir.exists():
+            pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
         if str(pipeline_dir) not in sys.path:
             sys.path.insert(0, str(pipeline_dir))
 
@@ -119,7 +125,9 @@ async def run_cpcb_cycle() -> None:
     try:
         import sys
         from pathlib import Path
-        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        pipeline_dir = Path(__file__).resolve().parent / "data_pipeline"
+        if not pipeline_dir.exists():
+            pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
         if str(pipeline_dir) not in sys.path:
             sys.path.insert(0, str(pipeline_dir))
 
@@ -191,7 +199,9 @@ async def run_incident_cycle() -> None:
     try:
         import sys
         from pathlib import Path
-        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        pipeline_dir = Path(__file__).resolve().parent / "data_pipeline"
+        if not pipeline_dir.exists():
+            pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
         if str(pipeline_dir) not in sys.path:
             sys.path.insert(0, str(pipeline_dir))
 
@@ -222,7 +232,9 @@ async def run_osm_diff_cycle() -> None:
     try:
         import sys
         from pathlib import Path
-        pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
+        pipeline_dir = Path(__file__).resolve().parent / "data_pipeline"
+        if not pipeline_dir.exists():
+            pipeline_dir = Path(__file__).resolve().parent.parent / "data_pipeline"
         if str(pipeline_dir) not in sys.path:
             sys.path.insert(0, str(pipeline_dir))
 
