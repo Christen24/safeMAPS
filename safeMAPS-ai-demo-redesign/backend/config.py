@@ -1,0 +1,104 @@
+"""
+SafeMAPS Backend Configuration
+Reads settings from environment variables / .env file.
+"""
+
+import os
+from pydantic_settings import BaseSettings
+from typing import Optional
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_PATH = os.path.join(ROOT_DIR, ".env")
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment."""
+
+    # --- Database ---
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "healthroute"
+    postgres_user: str = "healthroute"
+    postgres_password: str = "changeme_in_production"
+
+    # --- API Keys ---
+    waqi_api_token: Optional[str] = None
+    tomtom_api_key: Optional[str] = None
+
+    # CPCB real-time AQI — data.gov.in
+    # Register at https://data.gov.in → search "CPCB Real Time Air Quality"
+    # Endpoint: https://api.data.gov.in/resource/3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69
+    cpcb_api_key: Optional[str] = None
+
+    # Live incident sources (all optional — OSM Overpass needs no key)
+    # Waze CCP feed URL — register at https://developers.google.com/waze
+    waze_ccp_url: Optional[str] = None
+    # X/Twitter bearer token — https://developer.twitter.com (free tier: 1500 tweets/month)
+    x_bearer_token: Optional[str] = None
+
+    # --- Public AI + MCP demo ---
+    anthropic_api_key: Optional[str] = None
+    anthropic_model: str = "claude-sonnet-5"
+    mcp_server_url: str = "http://localhost:8001/mcp"
+    ai_max_tool_iterations: int = 6
+    ai_max_message_length: int = 1200
+    ai_request_timeout_seconds: int = 45
+    ai_rate_limit_window_seconds: int = 600
+    ai_rate_limit_requests: int = 10
+    ai_rate_limit_day_seconds: int = 86400
+    ai_rate_limit_day_requests: int = 50
+
+    # LLM provider for the AI demo: "anthropic" (direct API) or "openrouter"
+    # (routes through https://openrouter.ai — one key, many models, including
+    # Claude). OPENROUTER_API_KEY takes priority when llm_provider=openrouter;
+    # otherwise falls back to the direct ANTHROPIC_API_KEY path, and finally
+    # to the deterministic local fallback if neither key is set.
+    llm_provider: str = "anthropic"
+    openrouter_api_key: Optional[str] = None
+    openrouter_model: str = "anthropic/claude-sonnet-4.5"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Optional but recommended by OpenRouter for their public leaderboards —
+    # https://openrouter.ai/docs#requests. Safe to leave blank.
+    openrouter_site_url: Optional[str] = None
+    openrouter_app_name: str = "SafeMAPS AI Demo"
+
+    # Admin Security ---
+    # Set ADMIN_API_KEY in .env. All /api/admin/* endpoints require the
+    # X-Admin-Key header to match this value. If unset, admin endpoints
+    # are disabled entirely (returns 503).
+    admin_api_key: Optional[str] = None
+
+    # --- Server ---
+    backend_host: str = "0.0.0.0"
+    backend_port: int = 8000
+    cors_origins: str = "http://localhost:5173"
+
+    # --- Bengaluru Metropolitan Bounding Box ---
+    # Covers the core city plus common longer-route endpoints such as
+    # Bommasandra, Electronic City, Yelahanka, Kengeri, and Whitefield.
+    bbox_min_lat: float = 12.75
+    bbox_max_lat: float = 13.25
+    bbox_min_lon: float = 77.35
+    bbox_max_lon: float = 77.90
+
+    @property
+    def database_url(self) -> str:
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def async_database_url(self) -> str:
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",")]
+
+    model_config = {"env_file": ENV_PATH, "env_file_encoding": "utf-8", "extra": "ignore"}
+
+
+settings = Settings()

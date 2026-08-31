@@ -1,0 +1,52 @@
+# SafeMAPS MCP Server — Dockerfile
+# Reuses the same Python environment as the FastAPI backend (same deps,
+# different entrypoint). The MCP process loads its own graph cache and
+# DB pool — no shared memory with the FastAPI container.
+#
+# Build context: repo root (same as backend/Dockerfile)
+#   docker build -f backend/Dockerfile.mcp -t safemaps-mcp .
+#
+# Run:
+#   docker run -p 8001:8001 --env-file .env safemaps-mcp
+
+FROM python:3.11-slim AS base
+
+WORKDIR /app
+
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN for i in 1 2 3 4 5; do \
+    apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    libgeos-dev \
+    libproj-dev \
+    gdal-bin \
+    libosmium2-dev \
+    libboost-program-options-dev \
+    libboost-python-dev \
+    zlib1g-dev \
+    libexpat1-dev \
+    osmium-tool \
+    curl \
+    && break || sleep 15; done \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+RUN for i in 1 2 3 4 5; do \
+    pip install --no-cache-dir --default-timeout 100 "torch>=2.2.0" --index-url https://download.pytorch.org/whl/cpu \
+    && break || echo "PyTorch download failed, retrying in 5s..." && sleep 5; done \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY backend/ .
+COPY data_pipeline/ /app/data_pipeline/
+
+# Port the MCP HTTP server listens on (matches MCP_PORT env var default)
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8001/health || exit 1
+
+ENV MCP_PORT=8001
+
+CMD ["python", "mcp_server.py"]

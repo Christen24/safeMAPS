@@ -1,0 +1,69 @@
+Zone,Sub-division,Station,2025-Non Fatal,2025-Fatal crashes,2025-Total crashes
+East,East,Halasooru,35,8,43
+East,East,Indiranagar,74,24,98
+East,East,Pulikeshinagar,9,10,19
+East,East,Banasawadi,91,10,101
+East,East,Shivajinagar,17,1,18
+East,East,K G Halli,37,11,48
+,East ,Total,263,64,327
+East,Whitefield,K R Puram,233,34,267
+East,Whitefield,Airport,53,21,74
+East,Whitefield,Whitefield,68,27,95
+East,Whitefield,Mahadevapura,105,24,129
+,Whitefield,Total,459,106,565
+East,,East Total,722,170,892
+West,Central,Cubbon Park,50,0,50
+West,Central,H.Grounds,49,2,51
+West,Central,S.S.Nagar,58,4,62
+West,Central,U.Gate,62,5,67
+West,Central,Ashokanagar,26,14,40
+West,Central,W.Garden,32,8,40
+,Central,Total,277,33,310
+West,West,Upparpet,36,11,47
+West,West,Sheshadripuram/Chickpet,15,3,18
+West,West,City Market,28,3,31
+West,West,Bytarayanapura,124,22,146
+West,West,Kengeri,174,26,200
+West,West,Chamarajpet,13,4,17
+West,West,Jnanabharathi,140,18,158
+,West,Total,530,87,617
+West,Vijayanagar,Vijayanagar,65,12,77
+West,Vijayanagar,Magadi Road,37,2,39
+West,Vijayanagar,Kamakshipalya,170,23,193
+,Vijayanagar,Total,272,37,309
+West,,West Total,1079,157,1236
+North,North East,R T Nagar,26,7,33
+North,North East,Hebbala,140,24,164
+North,North East,Yalahanka,203,54,257
+North,North East,Chikkajala,166,48,214
+North,North East,Int. Aiport,104,42,146
+North,North East,Hennuru,66,22,88
+,North East,Total,705,197,902
+North,North,Malleshwaram,52,6,58
+North,North,Rajajinagar,79,12,91
+North,North,Yashawanthapura,84,18,102
+North,North,Peenya,148,19,167
+North,North,Jalahalli,48,8,56
+North,North,Chikkabanavara,104,13,117
+North,North,Kodigehalli,97,13,110
+,North,Total,612,89,701
+North,,North Total,1317,286,1603
+South,South East,Adugodi,59,7,66
+South,South East,Madivala,75,15,90
+South,South East,Micolayout,57,15,72
+South,South East,Hulimavu,66,24,90
+,South East,Total,257,61,318
+South,South,VV Puram,18,1,19
+South,South,Basavanagudi,76,6,82
+South,South,Jayanagar,55,11,66
+South,South,Banashankari,73,12,85
+South,South,K S Layout,68,9,77
+South,South,Thalagattapura,123,28,151
+South,South,JP Nagar,40,3,43
+,South,Total,453,70,523
+South,HSR Layout,HSR Layout,52,12,64
+South,HSR Layout,Electronic City,138,40,178
+South,HSR Layout,Bellanduru,65,11,76
+,HSR Layout,Total,255,63,318
+South,,South Total,965,194,1159
+Total,,Grand Total,4083,807,4890

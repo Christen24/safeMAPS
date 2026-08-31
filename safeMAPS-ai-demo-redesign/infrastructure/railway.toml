@@ -1,0 +1,28 @@
+# Railway deployment config for the SafeMAPS MCP Server
+# https://docs.railway.app/reference/config-as-code
+#
+# Deploy:
+#   1. Push this repo to GitHub
+#   2. Create a Railway project → "Deploy from GitHub repo"
+#   3. Set environment variables (DATABASE_URL pointing at your Postgres instance)
+#   4. Railway picks this file up automatically
+
+[build]
+dockerfilePath = "backend/Dockerfile.mcp"
+# Build context must be the repo root so COPY backend/ and COPY data_pipeline/ work
+buildContext = "."
+
+[deploy]
+startCommand = "python mcp_server.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 60          # seconds — graph load takes ~10-30s
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Keep alive — prevents cold-start latency on recruiter's first query.
+# Railway Hobby plan: $5/month for always-on; free tier sleeps after 30min.
+# Strongly recommended to avoid "first request times out" demo failure.
+# sleepApplication = false       # uncomment if Railway adds this option
+
+[[services]]
+name = "safemaps-mcp"

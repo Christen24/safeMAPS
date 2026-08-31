@@ -55,37 +55,37 @@ function FitRoute({ geometries }) {
 
 // ── Route with shadow + casing (matches primary map treatment) ─
 function RouteLayer({ routes, selectedProfile }) {
+    // Render selected route last so it sits on top of alternates.
+    const hasSelection = !!selectedProfile;
+    const sorted = hasSelection
+        ? [...routes.filter(r => (r.profile || r.route_id) !== selectedProfile),
+           ...routes.filter(r => (r.profile || r.route_id) === selectedProfile)]
+        : routes;
     return (
         <>
-            {routes.map((route, i) => {
+            {sorted.map((route, i) => {
                 const profile = route.profile || route.route_id || 'balanced';
                 const color = PROFILE_COLORS[profile] || '#9b87e8';
                 const coords = (route.geometry?.coordinates || []).map(([lon, lat]) => [lat, lon]);
                 if (coords.length < 2) return null;
+                const isSelected = !hasSelection || profile === selectedProfile;
+                const opacity    = isSelected ? 0.98 : 0.28;
+                const weight     = isSelected ? 4.5  : 3;
                 const key = `${profile}-${i}`;
-
-                // When a profile is selected: selected route is full-weight, others are ghost
-                const isSelected = !selectedProfile || profile === selectedProfile;
-                const opacity   = isSelected ? 0.98 : 0.28;
-                const fillW     = isSelected ? 4.5  : 2.5;
-                const casingOp  = isSelected ? 0.88 : 0.25;
-                const shadowOp  = isSelected ? 0.32 : 0.12;
-
                 return (
                     <span key={key}>
                         {/* shadow */}
-                        <Polyline positions={coords} pathOptions={{ color: '#03050a', weight: 9,   opacity: shadowOp, lineCap: 'round', lineJoin: 'round', interactive: false }} />
+                        <Polyline positions={coords} pathOptions={{ color: '#03050a', weight: 9,   opacity: isSelected ? 0.32 : 0.10, lineCap: 'round', lineJoin: 'round', interactive: false }} />
                         {/* casing */}
-                        <Polyline positions={coords} pathOptions={{ color: '#eef1fb', weight: 7.5, opacity: casingOp, lineCap: 'round', lineJoin: 'round', interactive: false }} />
+                        <Polyline positions={coords} pathOptions={{ color: '#eef1fb', weight: 7.5, opacity: isSelected ? 0.88 : 0.22, lineCap: 'round', lineJoin: 'round', interactive: false }} />
                         {/* fill */}
-                        <Polyline positions={coords} pathOptions={{ color, weight: fillW, opacity, lineCap: 'round', lineJoin: 'round' }} />
+                        <Polyline positions={coords} pathOptions={{ color, weight, opacity, lineCap: 'round', lineJoin: 'round' }} />
                     </span>
                 );
             })}
         </>
     );
 }
-
 
 // ── Origin/destination markers extracted from route geometry ──
 function RouteMarkers({ routes }) {
@@ -140,7 +140,7 @@ export default function AIMap({ routes, selectedProfile }) {
                 <ZoomControl position="bottomright" />
                 <FitRoute geometries={geometries} />
                 <RouteLayer routes={routes} selectedProfile={selectedProfile} />
-                <RouteMarkers routes={routes} selectedProfile={selectedProfile} />
+                <RouteMarkers routes={routes} />
             </MapContainer>
 
             {/* Compact basemap toggle */}
@@ -149,19 +149,19 @@ export default function AIMap({ routes, selectedProfile }) {
                     className={basemap === 'satellite' ? 'active' : ''}
                     onClick={() => setBasemap('satellite')}
                 >
-                    🛰 Satellite
+                    Satellite
                 </button>
                 <button
                     className={basemap === 'streets' ? 'active' : ''}
                     onClick={() => setBasemap('streets')}
                 >
-                    🗺 Streets
+                    Streets
                 </button>
             </div>
 
             {!routes.length && (
                 <div className="ai-map-empty">
-                    <span>Route geometry will appear here after an MCP route tool completes.</span>
+                    <span>Route geometry will appear here once SafeMAPS computes a path.</span>
                 </div>
             )}
         </div>

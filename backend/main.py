@@ -8,12 +8,12 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Depends, Header, HTTPException
+from fastapi import FastAPI, Depends, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 
 from config import settings
-from database import db
+from database import db, DatabaseUnavailable
 from graph_cache import graph_cache
 from metrics import metrics
 from scheduler import start_scheduler, stop_scheduler
@@ -85,7 +85,8 @@ async def lifespan(app: FastAPI):
             if attempt < MAX_RETRIES:
                 logger.warning(
                     f"Startup attempt {attempt}/{MAX_RETRIES} failed: {exc}. "
-                    f"Retrying in {RETRY_DELAY}s…"
+                    f"Retrying in {RETRY_DELAY}s…",
+                    exc_info=True
                 )
                 await asyncio.sleep(RETRY_DELAY)
             else:
@@ -127,6 +128,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(DatabaseUnavailable)
+async def database_unavailable_handler(request: Request, exc: DatabaseUnavailable):
+    """
+    Turns a not-connected DB pool into a clean 503 with a JSON `detail`
+    body instead of Starlette's default plain-text 500 — so the frontend
+    can actually show the user (and us) what's wrong instead of a
+    generic "Internal Server Error" that isn't even valid JSON.
+    """
+    logger.error(f"{request.method} {request.url.path} failed: {exc}")
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 app.include_router(route_router,    prefix="/api/route",     tags=["Routing"])
 app.include_router(aqi_router,      prefix="/api/aqi",       tags=["Air Quality"])

@@ -43,15 +43,25 @@ export async function getAIStatus() {
     return response.json();
 }
 
-export async function getProfileRoutes(origin_lat, origin_lon, dest_lat, dest_lon) {
+/**
+ * Deterministically fetch all four routing profiles without invoking the LLM.
+ * Calls POST /api/ai/profile-routes → FastAPI → SafeMapsMCPClient →
+ * MCP compare_route_profiles tool. Returns the raw API response.
+ *
+ * @param {{ origin_lat: number, origin_lon: number, dest_lat: number, dest_lon: number }} coords
+ * @returns {Promise<{ routes: Array }>}
+ */
+export async function getProfileRoutes({ origin_lat, origin_lon, dest_lat, dest_lon }) {
     const response = await fetch(`${API_BASE}/ai/profile-routes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ origin_lat, origin_lon, dest_lat, dest_lon }),
     });
     if (!response.ok) {
-        const detail = await response.json().catch(() => ({}));
-        throw new Error(detail.detail || 'Could not fetch route profiles.');
+        const raw = await response.text();
+        let detail;
+        try { detail = JSON.parse(raw).detail; } catch { detail = raw; }
+        throw new Error(detail || `Profile routes failed (HTTP ${response.status})`);
     }
     return response.json();
 }

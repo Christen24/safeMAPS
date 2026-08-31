@@ -1,0 +1,142 @@
+version: "3.9"
+
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: safemaps-postgis
+    environment:
+      POSTGRES_DB: healthroute
+      POSTGRES_USER: healthroute
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+    ports:
+      - "5433:5432"   # expose direct for migrations/admin; pgbouncer handles app traffic
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-postgis.sh:/docker-entrypoint-initdb.d/10-init-postgis.sh
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U healthroute -d healthroute" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PgBouncer: transaction-mode connection pooler ─────────────────
+  # Prevents connection exhaustion under load (/compare = 8 connections/req)
+  # Backend connects to pgbouncer:5433 instead of postgis:5432
+  pgbouncer:
+    image: bitnamilegacy/pgbouncer:1.22.1
+    container_name: safemaps-pgbouncer
+    environment:
+      POSTGRESQL_HOST: postgis
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE: healthroute
+      POSTGRESQL_USERNAME: healthroute
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: 500
+      PGBOUNCER_DEFAULT_POOL_SIZE: 20
+      PGBOUNCER_MIN_POOL_SIZE: 2
+      PGBOUNCER_RESERVE_POOL_SIZE: 5
+      PGBOUNCER_SERVER_IDLE_TIMEOUT: 600
+      PGBOUNCER_PORT: 5432
+      PGBOUNCER_DATABASE: healthroute
+    expose:
+      - "5432"
+    depends_on:
+      postgis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/bitnami/postgresql/bin/psql -h 127.0.0.1 -p 5432 -U healthroute -d healthroute -c 'SELECT 1' -q --no-align 2>&1 | grep -q '1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: safemaps-backend
+    environment:
+      # Route backend through PgBouncer instead of direct PostGIS
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthroute
+      POSTGRES_USER: healthroute
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      WAQI_API_TOKEN: ${WAQI_API_TOKEN}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY}
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      CPCB_API_KEY: ${CPCB_API_KEY}
+      WAZE_CCP_URL: ${WAZE_CCP_URL:-}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      MCP_SERVER_URL: "http://mcp:8001/mcp"
+      CORS_ORIGINS: "http://localhost:3000,http://frontend"
+      BBOX_MIN_LAT: "12.75"
+      BBOX_MAX_LAT: "13.25"
+      BBOX_MIN_LON: "77.35"
+      BBOX_MAX_LON: "77.90"
+    expose:
+      - "8000"
+    depends_on:
+      mcp:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8000/health || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  mcp:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.mcp
+    container_name: safemaps-mcp
+    environment:
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: healthroute
+      POSTGRES_USER: healthroute
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      WAQI_API_TOKEN: ${WAQI_API_TOKEN}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY}
+      CPCB_API_KEY: ${CPCB_API_KEY}
+      WAZE_CCP_URL: ${WAZE_CCP_URL:-}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      BBOX_MIN_LAT: "12.75"
+      BBOX_MAX_LAT: "13.25"
+      BBOX_MIN_LON: "77.35"
+      BBOX_MAX_LON: "77.90"
+      MCP_PORT: 8001
+    expose:
+      - "8001"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8001/health || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.frontend
+    container_name: safemaps-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
