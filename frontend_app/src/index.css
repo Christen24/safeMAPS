@@ -3621,25 +3621,30 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
     position: relative;
     transition: background var(--ease-snap), border-bottom-color var(--ease-snap);
     border-bottom: 2px solid transparent;
-    cursor: default;
+    cursor: pointer;
+    background: transparent;
+    border-top: none;
+    border-left: none;
+    text-align: center;
 }
 .ai-profile-card:last-child { border-right: none; }
+.ai-profile-card:hover {
+    background: var(--surface-1);
+}
 
+/* loaded = route data exists for this profile */
+.ai-profile-card.loaded {
+    border-bottom-color: color-mix(in srgb, var(--prof-color, #4ecb8d) 35%, transparent);
+}
+
+/* active = currently selected profile */
 .ai-profile-card.active {
-    background: rgba(var(--prof-color, 78, 203, 141), 0.06);
     border-bottom-color: var(--prof-color, #4ecb8d);
 }
-.ai-profile-card.highlight {
-    background: rgba(var(--prof-color, 78, 203, 141), 0.12);
-    border-bottom-color: var(--prof-color, #4ecb8d);
-    box-shadow: inset 0 0 0 1px rgba(var(--prof-color, 78, 203, 141), 0.15);
-}
-
-/* CSS custom properties with color need special handling for rgba() — use solid color */
-.ai-profile-card[style*="4fc3e0"].active  { background: rgba(79,195,224,0.07); }
-.ai-profile-card[style*="4ecb8d"].active  { background: rgba(78,203,141,0.07); }
-.ai-profile-card[style*="f0a93e"].active  { background: rgba(240,169,62,0.07); }
-.ai-profile-card[style*="9b87e8"].active  { background: rgba(155,135,232,0.07); }
+.ai-profile-card[style*="4fc3e0"].active { background: rgba(79,195,224,0.08); }
+.ai-profile-card[style*="4ecb8d"].active { background: rgba(78,203,141,0.08); }
+.ai-profile-card[style*="f0a93e"].active { background: rgba(240,169,62,0.08); }
+.ai-profile-card[style*="9b87e8"].active { background: rgba(155,135,232,0.08); }
 
 .ai-profile-icon {
     font-size: 1.05rem;
@@ -3653,8 +3658,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
     text-transform: uppercase;
     color: var(--text-secondary);
 }
-.ai-profile-card.active .ai-profile-label,
-.ai-profile-card.highlight .ai-profile-label {
+.ai-profile-card.active .ai-profile-label {
     color: var(--prof-color, var(--acid));
 }
 .ai-profile-sub {
@@ -3824,6 +3828,157 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
     word-break: break-word;
 }
 
+/* ── Markdown renderer ──────────────────────────────────────── */
+.ai-md-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.65rem 0.9rem;
+}
+.ai-md-h3 {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--acid);
+    margin: 0.3rem 0 0.1rem;
+}
+.ai-md-h4 {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    margin: 0.15rem 0 0.05rem;
+}
+.ai-md-rule {
+    border: none;
+    border-top: 1px solid var(--border-dim);
+    margin: 0.25rem 0;
+}
+.ai-md-p {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+.ai-md-list {
+    margin: 0;
+    padding-left: 1.25rem;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+.ai-md-list li { margin-bottom: 0.15rem; }
+.ai-md-table-wrap {
+    overflow-x: auto;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-dim);
+}
+.ai-md-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+}
+.ai-md-table th {
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.35rem 0.7rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-dim);
+}
+.ai-md-table td {
+    padding: 0.3rem 0.7rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-dim);
+}
+.ai-md-table tr:last-child td { border-bottom: none; }
+.ai-md-table strong { color: var(--text-primary); font-weight: 600; }
+.ai-md-table em { color: var(--ice); font-style: normal; }
+.ai-md-body code {
+    background: var(--surface-2);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+    color: var(--amber);
+}
+
+/* ── Route Result Panel ─────────────────────────────────────── */
+.ai-route-result {
+    background: var(--surface-1);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--r-md);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 0.25rem;
+}
+.ai-route-result-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.ai-route-result-icon { font-size: 1.1rem; }
+.ai-route-result-label {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--rr-color, var(--acid));
+}
+.ai-route-result-summary {
+    display: flex;
+    gap: 1.25rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+}
+.ai-route-result-divider {
+    border-top: 1px solid var(--border-dim);
+    margin: 0.1rem 0;
+}
+.ai-route-result-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+.ai-route-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.ai-route-metric-label {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+.ai-route-metric-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+.ai-route-metric-val {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+}
+
+/* ai-message wraps ai-md-body directly — remove double padding */
+.ai-message.assistant p:empty { display: none; }
+
 /* Responsive: stack on narrow screens */
 @media (max-width: 900px) {
     .ai-demo-main {
@@ -3831,5 +3986,6 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
         grid-template-rows: 55vh 1fr;
     }
     .ai-chat-panel { border-right: none; border-bottom: 1px solid var(--border-dim); }
+    .ai-profile-sub { display: none; }
 }
 

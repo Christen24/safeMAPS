@@ -54,7 +54,7 @@ function FitRoute({ geometries }) {
 }
 
 // ── Route with shadow + casing (matches primary map treatment) ─
-function RouteLayer({ routes }) {
+function RouteLayer({ routes, selectedProfile }) {
     return (
         <>
             {routes.map((route, i) => {
@@ -63,20 +63,29 @@ function RouteLayer({ routes }) {
                 const coords = (route.geometry?.coordinates || []).map(([lon, lat]) => [lat, lon]);
                 if (coords.length < 2) return null;
                 const key = `${profile}-${i}`;
+
+                // When a profile is selected: selected route is full-weight, others are ghost
+                const isSelected = !selectedProfile || profile === selectedProfile;
+                const opacity   = isSelected ? 0.98 : 0.28;
+                const fillW     = isSelected ? 4.5  : 2.5;
+                const casingOp  = isSelected ? 0.88 : 0.25;
+                const shadowOp  = isSelected ? 0.32 : 0.12;
+
                 return (
                     <span key={key}>
                         {/* shadow */}
-                        <Polyline positions={coords} pathOptions={{ color: '#03050a', weight: 9,   opacity: 0.32, lineCap: 'round', lineJoin: 'round', interactive: false }} />
+                        <Polyline positions={coords} pathOptions={{ color: '#03050a', weight: 9,   opacity: shadowOp, lineCap: 'round', lineJoin: 'round', interactive: false }} />
                         {/* casing */}
-                        <Polyline positions={coords} pathOptions={{ color: '#eef1fb', weight: 7.5, opacity: 0.88, lineCap: 'round', lineJoin: 'round', interactive: false }} />
+                        <Polyline positions={coords} pathOptions={{ color: '#eef1fb', weight: 7.5, opacity: casingOp, lineCap: 'round', lineJoin: 'round', interactive: false }} />
                         {/* fill */}
-                        <Polyline positions={coords} pathOptions={{ color,            weight: 4.5, opacity: 0.98, lineCap: 'round', lineJoin: 'round' }} />
+                        <Polyline positions={coords} pathOptions={{ color, weight: fillW, opacity, lineCap: 'round', lineJoin: 'round' }} />
                     </span>
                 );
             })}
         </>
     );
 }
+
 
 // ── Origin/destination markers extracted from route geometry ──
 function RouteMarkers({ routes }) {
@@ -112,7 +121,7 @@ const TILE_LAYERS = {
     },
 };
 
-export default function AIMap({ routes }) {
+export default function AIMap({ routes, selectedProfile }) {
     const [basemap, setBasemap] = useState('satellite');
     const geometries = routes.map(r => r.geometry).filter(Boolean);
 
@@ -130,8 +139,8 @@ export default function AIMap({ routes }) {
 
                 <ZoomControl position="bottomright" />
                 <FitRoute geometries={geometries} />
-                <RouteLayer routes={routes} />
-                <RouteMarkers routes={routes} />
+                <RouteLayer routes={routes} selectedProfile={selectedProfile} />
+                <RouteMarkers routes={routes} selectedProfile={selectedProfile} />
             </MapContainer>
 
             {/* Compact basemap toggle */}
