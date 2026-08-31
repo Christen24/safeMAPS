@@ -3,9 +3,12 @@ SafeMAPS Backend Configuration
 Reads settings from environment variables / .env file.
 """
 
+import os
 from pydantic_settings import BaseSettings
 from typing import Optional
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_PATH = os.path.join(ROOT_DIR, ".env")
 
 class Settings(BaseSettings):
     """Application settings loaded from environment."""
@@ -95,7 +98,7 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",")]
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {"env_file": ENV_PATH, "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()
