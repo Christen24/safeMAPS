@@ -42,3 +42,16 @@ export async function getAIStatus() {
     if (!response.ok) throw new Error('AI status unavailable');
     return response.json();
 }
+
+export async function getProfileRoutes(origin_lat, origin_lon, dest_lat, dest_lon) {
+    const response = await fetch(`${API_BASE}/ai/profile-routes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ origin_lat, origin_lon, dest_lat, dest_lon }),
+    });
+    if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.detail || 'Could not fetch route profiles.');
+    }
+    return response.json();
+}

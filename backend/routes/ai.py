@@ -132,3 +132,34 @@ async def ai_reset(payload: dict):
     if session_id:
         session_store.reset(session_id)
     return {"status": "reset"}
+
+
+class ProfileRoutesRequest(BaseModel):
+    origin_lat: float
+    origin_lon: float
+    dest_lat: float
+    dest_lon: float
+
+
+@router.post("/profile-routes")
+async def get_profile_routes(payload: ProfileRoutesRequest, request: Request):
+    """
+    Deterministically fetch all 4 routing profiles without invoking the LLM.
+    Uses the existing SafeMAPS MCP server for logic consistency.
+    """
+    _enforce_rate_limit(_client_ip(request))
+    from ai.mcp_client import SafeMapsMCPClient
+    mcp_client = SafeMapsMCPClient(settings.mcp_server_url, timeout_seconds=settings.ai_request_timeout_seconds)
+    
+    call = await mcp_client.call_tool(
+        "compare_route_profiles",
+        {
+            "origin_lat": payload.origin_lat,
+            "origin_lon": payload.origin_lon,
+            "dest_lat": payload.dest_lat,
+            "dest_lon": payload.dest_lon,
+        }
+    )
+    
+    # result is a dict containing 'routes' (list) or 'error' (str)
+    return call.result

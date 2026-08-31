@@ -65,7 +65,7 @@ const NavBar = memo(function NavBar({ view, setView, handleShowAQI, isOffline, i
                     <div className="nav-hex" />
                     <span className="nav-wordmark">SafeMAPS</span>
                 </div>
-                <span className="nav-system-label">BLR HEALTH ROUTING · v0.5</span>
+                <span className="nav-system-label">BLR HEALTH ROUTING</span>
             </div>
             {/* Tabs */}
             <div className="nav-tabs">

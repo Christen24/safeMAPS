@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AIMap from '../components/ai/AIMap';
 import MarkdownMessage from '../components/ai/MarkdownMessage';
 import ToolCallCard from '../components/ai/ToolCallCard';
-import { getAIStatus, streamAIChat } from '../services/chatApi';
+import { getAIStatus, streamAIChat, getProfileRoutes } from '../services/chatApi';
 
 const PROMPTS = [
     'Safest route from Koramangala to Whitefield',
@@ -138,9 +138,18 @@ export default function AIDemo({ onBack }) {
     const [sessionId, setSessionId]       = useState(() => crypto.randomUUID());
     const [loading, setLoading]           = useState(false);
     const [selectedProfile, setSelectedProfile] = useState(null); // which profile tab is active
+    const [deterministicRoutes, setDeterministicRoutes] = useState([]); // routes fetched via direct MCP call
+    const fetchingRef = useRef(false);
     const abortRef = useRef(null);
 
-    const routes         = useMemo(() => extractRoutes(toolEvents),     [toolEvents]);
+    // Merge conversational routes with deterministic UI-fetched routes
+    const routes = useMemo(() => {
+        const convo = extractRoutes(toolEvents);
+        // Combine them. If the same profile exists in both, deterministic is newer.
+        // Actually, we can just concat and let getRouteForProfile pick the first match (if we reverse).
+        return [...convo, ...deterministicRoutes].reverse();
+    }, [toolEvents, deterministicRoutes]);
+
     const routeCtx       = useMemo(() => extractRouteContext(toolEvents), [toolEvents]);
     const activeProfiles = useMemo(() => getActiveProfiles(routes),     [routes]);
 
@@ -221,6 +230,9 @@ export default function AIDemo({ onBack }) {
         if (!message || loading) return;
         setInput('');
         setLoading(true);
+        // Clear deterministic routes so fresh conversational requests take precedence
+        setDeterministicRoutes([]); 
+        setSelectedProfile(null);
         setMessages(prev => [...prev, { role: 'user', content: message }]);
         abortRef.current?.abort();
         abortRef.current = new AbortController();
@@ -234,35 +246,44 @@ export default function AIDemo({ onBack }) {
 
     // Handle clicking a profile tab
     // Case A: route already exists in current data → just select it
-    // Case B: route not loaded → trigger a real AI/MCP request for that profile
+    // Case B: route not loaded → trigger a deterministic AI/MCP fetch for that profile
     const handleProfileClick = useCallback(async (profileId) => {
         setSelectedProfile(profileId);
 
         const alreadyLoaded = activeProfiles.has(profileId);
         if (alreadyLoaded) return; // Case A — just switch view
 
-        // Case B — need to fetch this profile
-        if (!routeCtx) {
-            // No route context yet; ask user to ask for a route first
+        // Case B — need to fetch this profile deterministically
+        if (!routeCtx || fetchingRef.current) {
             return;
         }
 
-        // Build a natural-language request so the AI uses the same MCP pipeline
-        const originName = `origin (${routeCtx.origin_lat.toFixed(4)}, ${routeCtx.origin_lon.toFixed(4)})`;
-        const destName   = `destination (${routeCtx.dest_lat.toFixed(4)}, ${routeCtx.dest_lon.toFixed(4)})`;
-        const profileMsg = `Show me the ${profileId} route between the same ${originName} and ${destName}`;
-
+        fetchingRef.current = true;
         setLoading(true);
-        setMessages(prev => [...prev, { role: 'user', content: `Switching to ${profileId} route…`, _synthetic: true }]);
-        abortRef.current?.abort();
-        abortRef.current = new AbortController();
+        
         try {
-            await streamAIChat({ message: profileMsg, sessionId, signal: abortRef.current.signal, onEvent: handleEvent });
+            const res = await getProfileRoutes(
+                routeCtx.origin_lat, 
+                routeCtx.origin_lon, 
+                routeCtx.dest_lat, 
+                routeCtx.dest_lon
+            );
+            
+            if (res && Array.isArray(res.routes)) {
+                // MCP `compare_route_profiles` returns all 4 profiles, so cache them all
+                setDeterministicRoutes(res.routes);
+            } else if (res && res.error) {
+                throw new Error(res.error);
+            }
         } catch (err) {
+            console.error("Profile switch failed:", err);
+            // Optionally could display a toast or error in UI
+            // but we don't pollute chat history for a failed UI interaction
+        } finally {
+            fetchingRef.current = false;
             setLoading(false);
-            setMessages(prev => [...prev, { role: 'assistant', content: err.message }]);
         }
-    }, [activeProfiles, routeCtx, sessionId, handleEvent]);
+    }, [activeProfiles, routeCtx]);
 
     return (
         <div className="ai-demo-shell">

@@ -66,7 +66,7 @@ const LandingPage = memo(function LandingPage({ onStart, onLaunchAI }) {
             {/* Hero */}
             <div className="landing-hero">
                 <div className="hero-system-tag fade-in-up">
-                    SAFEMAPS · BENGALURU HEALTH ROUTING SYSTEM · v0.5
+                    SAFEMAPS · BENGALURU HEALTH ROUTING SYSTEM
                 </div>
 
                 <h1 className="fade-in-up" style={{ animationDelay: '0.08s' }}>
@@ -138,7 +138,7 @@ const LandingPage = memo(function LandingPage({ onStart, onLaunchAI }) {
             </div>
 
             <div className="landing-footer">
-                SAFEMAPS v0.5.0 · Bengaluru · OSM · CPCB · WAQI · BiDir A* · MIT License
+                SAFEMAPS · Bengaluru · OSM · CPCB · WAQI · BiDir A* · MIT License
             </div>
         </div>
     );
