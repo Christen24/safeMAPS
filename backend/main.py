@@ -57,56 +57,13 @@ async def require_admin_key(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Connect + load graph with retry ───────────────────────────────
-    # PgBouncer may not be ready the instant the backend starts during a
-    # full-stack restart. We retry BOTH connect and graph load together so
-    # the pool is fully replaced on each attempt (a broken pool from attempt
-    # 1 cannot be healed by just retrying graph_cache.load).
-    MAX_RETRIES = 8
-    RETRY_DELAY = 5  # seconds between attempts
-
-    node_count = 0
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            # Tear down any broken pool from a previous attempt
-            try:
-                await db.disconnect()
-            except Exception:
-                pass
-
-            await db.connect()
-            logger.info(f"Database pool connected (attempt {attempt}).")
-
-            node_count = await graph_cache.load(db)
-            logger.info(f"Graph cache warmed: {node_count:,} nodes loaded.")
-            break  # success — exit retry loop
-
-        except Exception as exc:
-            if attempt < MAX_RETRIES:
-                logger.warning(
-                    f"Startup attempt {attempt}/{MAX_RETRIES} failed: {exc}. "
-                    f"Retrying in {RETRY_DELAY}s…",
-                    exc_info=True
-                )
-                await asyncio.sleep(RETRY_DELAY)
-            else:
-                logger.critical(
-                    f"Startup failed after {MAX_RETRIES} attempts: {exc}. "
-                    "Server starting without graph — use POST /api/admin/refresh-graph to recover."
-                )
-
-    if not settings.admin_api_key:
-        logger.warning(
-            "ADMIN_API_KEY is not set — admin endpoints are disabled. "
-            "Add ADMIN_API_KEY=<secret> to your .env to enable them."
-        )
-
-    scheduler = start_scheduler()
-
+    import httpx
+    # Expose a shared internal httpx client on the app for proxying to MCP
+    app.state.http_client = httpx.AsyncClient(timeout=10.0)
+    
     yield
-
-    stop_scheduler(scheduler)
-    await db.disconnect()
+    
+    await app.state.http_client.aclose()
     logger.info("Shutdown complete.")
 
 
@@ -151,38 +108,40 @@ app.include_router(ai_router,       prefix="/api/ai",        tags=["AI Demo"])
 
 @app.get("/health", tags=["System"])
 async def health_check():
+    import httpx
+    mcp_url = settings.mcp_server_url
+    if mcp_url.endswith("/mcp"):
+        mcp_base = mcp_url[:-4]
+    else:
+        mcp_base = mcp_url
+        
     try:
-        await db.fetchval("SELECT 1")
-        db_status = "connected"
+        res = await app.state.http_client.get(f"{mcp_base}/internal/status")
+        graph_status = res.json() if res.status_code == 200 else {}
     except Exception:
-        db_status = "disconnected"
+        graph_status = {}
 
     return {
         "status":    "ok",
         "version":   "0.5.0",  # Phase 6: CPCB + Live Incidents
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "database":  db_status,
+        "database":  "managed by mcp",
         "graph": {
-            "loaded":      graph_cache.is_loaded,
-            "nodes":       graph_cache.node_count,
-            "edges":       graph_cache.edge_count,
-            "age_seconds": round(graph_cache.age_seconds, 1),
+            "loaded":      graph_status.get("loaded", False),
+            "nodes":       graph_status.get("nodes", 0),
+            "edges":       graph_status.get("edges", 0),
+            "age_seconds": graph_status.get("age_seconds", 0),
         },
         "aqi_cache": {
-            "edges_with_aqi": len(graph_cache.edge_aqi),
-            "age_seconds":    round(graph_cache.aqi_age_seconds, 1),
+            "edges_with_aqi": graph_status.get("edges_with_aqi", 0),
+            "age_seconds":    graph_status.get("aqi_age_seconds", 0),
         },
         "incident_cache": {
-            "edges_with_incidents": graph_cache.incident_count,
-            "age_seconds":         round(graph_cache.incident_age_seconds, 1),
+            "edges_with_incidents": graph_status.get("edges_with_incidents", 0),
+            "age_seconds":         graph_status.get("incident_age_seconds", 0),
         },
         "scheduler": {
-            "aqi_interval_minutes":      15,
-            "cpcb_interval_minutes":     15,
-            "traffic_interval_minutes":   5,
-            "lstm_interval_minutes":     30,
-            "incident_interval_minutes": 10,
-            "osm_diff_cron":             "Sunday 02:00 UTC",
+            "status": "managed by mcp",
         },
     }
 
@@ -193,49 +152,31 @@ async def prometheus_metrics():
     return metrics.to_prometheus()
 
 
+def get_mcp_base():
+    mcp_url = settings.mcp_server_url
+    return mcp_url[:-4] if mcp_url.endswith("/mcp") else mcp_url
+
 @app.post("/api/admin/refresh-graph", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def refresh_graph():
-    node_count = await graph_cache.load(db)
-    return {"status": "reloaded", "nodes": node_count, "edges": graph_cache.edge_count}
-
+    res = await app.state.http_client.post(f"{get_mcp_base()}/internal/refresh-graph", timeout=60.0)
+    return res.json()
 
 @app.post("/api/admin/refresh-aqi", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def refresh_aqi():
-    await graph_cache.refresh_aqi_costs(db)
-    return {
-        "status":           "refreshed",
-        "edges_with_aqi":   len(graph_cache.edge_aqi),
-        "aqi_age_seconds":  round(graph_cache.aqi_age_seconds, 1),
-    }
-
+    res = await app.state.http_client.post(f"{get_mcp_base()}/internal/refresh-aqi", timeout=60.0)
+    return res.json()
 
 @app.post("/api/admin/run-aqi-scrape", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def run_aqi_scrape():
-    from scheduler import run_aqi_cycle
-    await run_aqi_cycle()
-    return {"status": "complete", "edges_with_aqi": len(graph_cache.edge_aqi)}
-
+    res = await app.state.http_client.post(f"{get_mcp_base()}/internal/run-aqi-scrape", timeout=60.0)
+    return res.json()
 
 @app.post("/api/admin/run-traffic-scrape", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def run_traffic_scrape():
-    from scheduler import run_traffic_cycle
-    await run_traffic_cycle()
-    return {"status": "complete", "edges": graph_cache.edge_count}
-
+    res = await app.state.http_client.post(f"{get_mcp_base()}/internal/run-traffic-scrape", timeout=60.0)
+    return res.json()
 
 @app.post("/api/admin/expire-incidents", tags=["Admin"], dependencies=[Depends(require_admin_key)])
 async def expire_incidents():
-    """Manually mark all stale incidents as inactive. Useful for demo resets."""
-    result = await db.execute("""
-        UPDATE live_incidents
-        SET is_active = FALSE
-        WHERE is_active = TRUE
-          AND expires_at < NOW();
-    """)
-    expired = int(result.split()[-1])
-    await graph_cache.refresh_incident_costs(db)
-    return {
-        "status":  "expired",
-        "expired": expired,
-        "active_edges": graph_cache.incident_count,
-    }
+    res = await app.state.http_client.post(f"{get_mcp_base()}/internal/expire-incidents", timeout=60.0)
+    return res.json()

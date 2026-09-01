@@ -40,60 +40,35 @@ def _parse_hour(departure_time: str | None) -> int | None:
 async def compute_route(request: RouteRequest):
     """
     Compute a health-and-safety-aware route between two points.
-
-    The route minimizes: C_e = α·T_e + β·∫AQI(t)dt + γ·R_e
-
-    - Set use_custom_weights=true to use slider values directly
-    - Set use_custom_weights=false (default) to use profile presets
+    Uses the MCP server as the single source of truth for routing.
     """
-    if request.use_custom_weights:
-        alpha, beta, gamma = request.alpha, request.beta, request.gamma
-    else:
-        alpha, beta, gamma = get_profile_weights(request.profile)
+    from mcp_client import mcp_client
+    
+    args = {
+        "origin_lat": request.origin.lat,
+        "origin_lon": request.origin.lon,
+        "dest_lat": request.destination.lat,
+        "dest_lon": request.destination.lon,
+        "profile": request.profile,
+    }
+    if request.departure_time:
+        args["departure_time"] = request.departure_time
 
-    hour = _parse_hour(request.departure_time)
-
-    route = await find_route(
-        origin_lat=request.origin.lat,
-        origin_lon=request.origin.lon,
-        dest_lat=request.destination.lat,
-        dest_lon=request.destination.lon,
-        alpha=alpha,
-        beta=beta,
-        gamma=gamma,
-        profile=request.profile,
-        hour=hour,
-    )
-
-    if not route:
-        # Fix R1: distinguish between "no road near point" and "no path found"
-        # so users get actionable feedback instead of a generic 404
-        from spatial_queries import snap_to_nearest_node
-        origin_node = await snap_to_nearest_node(
-            request.origin.lat, request.origin.lon
-        )
-        dest_node = await snap_to_nearest_node(
-            request.destination.lat, request.destination.lon
-        )
-        if not origin_node:
-            raise HTTPException(
-                status_code=422,
-                detail="No road found within 500m of the origin point. "
-                       "Try clicking on or near a road.",
-            )
-        if not dest_node:
-            raise HTTPException(
-                status_code=422,
-                detail="No road found within 500m of the destination point. "
-                       "Try clicking on or near a road.",
-            )
+    try:
+        res = await mcp_client.call_tool("get_safe_route", args)
+    except Exception as exc:
         raise HTTPException(
-            status_code=404,
-            detail="No route found between these two points. "
-                   "The locations may be disconnected in the road network.",
+            status_code=500,
+            detail=f"Failed to communicate with MCP routing server: {exc}"
         )
 
-    return route
+    if "error" in res:
+        err = res["error"]
+        if "No route found" in err:
+            raise HTTPException(status_code=404, detail=err)
+        raise HTTPException(status_code=422, detail=err)
+
+    return res
 
 
 @router.get("/compare", response_model=CompareRoutesResponse)
@@ -106,56 +81,39 @@ async def compare_routes(
 ):
     """
     Compare routes across all profiles (fastest, safest, healthiest, balanced).
-    Bug 5 fix: runs all 4 A* searches concurrently instead of sequentially.
+    Uses the MCP server as the single source of truth for routing.
     """
-    hour = _parse_hour(departure_time)
+    from mcp_client import mcp_client
+    
+    args = {
+        "origin_lat": origin_lat,
+        "origin_lon": origin_lon,
+        "dest_lat": dest_lat,
+        "dest_lon": dest_lon,
+    }
+    if departure_time:
+        args["departure_time"] = departure_time
 
-    from spatial_queries import snap_to_nearest_node
-    origin_node = await snap_to_nearest_node(origin_lat, origin_lon)
-    dest_node = await snap_to_nearest_node(dest_lat, dest_lon)
-
-    if not origin_node:
+    # FastMCP tool returns a dict with "routes" or "error"
+    try:
+        res = await mcp_client.call_tool("compare_route_profiles", args)
+    except Exception as exc:
         raise HTTPException(
-            status_code=422,
-            detail=(
-                "No road found within 500m of the origin point. "
-                "This usually means the point is outside the loaded road-network area. "
-                "Reload OSM data with the expanded Bengaluru bbox, or pick an origin closer to a mapped road."
-            ),
-        )
-    if not dest_node:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "No road found within 500m of the destination point. "
-                "This usually means the point is outside the loaded road-network area. "
-                "Reload OSM data with the expanded Bengaluru bbox, or pick a destination closer to a mapped road."
-            ),
+            status_code=500,
+            detail=f"Failed to communicate with MCP routing server: {exc}"
         )
 
-    results = await asyncio.gather(*[
-        find_route(
-            origin_lat=origin_lat,
-            origin_lon=origin_lon,
-            dest_lat=dest_lat,
-            dest_lon=dest_lon,
-            alpha=a, beta=b, gamma=g,
-            profile=p,
-            hour=hour,
-        )
-        for p in RouteProfile
-        for a, b, g in [get_profile_weights(p)]
-    ], return_exceptions=True)
+    if "error" in res:
+        # The original MCP tool returns string error messages
+        err = res["error"]
+        if "No road found" in err:
+            raise HTTPException(status_code=422, detail=err)
+        raise HTTPException(status_code=404, detail=err)
 
-    routes = [r for r in results if r and not isinstance(r, Exception)]
-
-    if not routes:
+    if "routes" not in res or not res["routes"]:
         raise HTTPException(
             status_code=404,
-            detail=(
-                "No routes found between the snapped road nodes. "
-                "The road graph may be disconnected or still loaded with the older, smaller bbox."
-            ),
+            detail="No routes found between the points."
         )
-
-    return CompareRoutesResponse(routes=routes)
+        
+    return CompareRoutesResponse(routes=res["routes"])

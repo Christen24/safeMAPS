@@ -478,6 +478,109 @@ if __name__ == "__main__":
     # lifespan argument. To ensure the graph loads, we extract the Starlette
     # app, wrap its lifespan, and run it via uvicorn directly.
     app = mcp.streamable_http_app()
+    
+    # Internal routes for backend proxying
+    async def get_status(request):
+        return JSONResponse({
+            "loaded": graph_cache.is_loaded,
+            "nodes": graph_cache.node_count,
+            "edges": graph_cache.edge_count,
+            "age_seconds": round(graph_cache.age_seconds, 1),
+            "edges_with_aqi": len(graph_cache.edge_aqi),
+            "aqi_age_seconds": round(graph_cache.aqi_age_seconds, 1),
+            "edges_with_incidents": graph_cache.incident_count,
+            "incident_age_seconds": round(graph_cache.incident_age_seconds, 1),
+        })
+    app.add_route("/internal/status", get_status, methods=["GET"])
+    
+    async def refresh_graph(request):
+        node_count = await graph_cache.load(db)
+        return JSONResponse({"status": "reloaded", "nodes": node_count, "edges": graph_cache.edge_count})
+    app.add_route("/internal/refresh-graph", refresh_graph, methods=["POST"])
+    
+    async def refresh_aqi(request):
+        await graph_cache.refresh_aqi_costs(db)
+        return JSONResponse({
+            "status": "refreshed",
+            "edges_with_aqi": len(graph_cache.edge_aqi),
+            "aqi_age_seconds": round(graph_cache.aqi_age_seconds, 1),
+        })
+    app.add_route("/internal/refresh-aqi", refresh_aqi, methods=["POST"])
+    
+    async def run_aqi_scrape(request):
+        from scheduler import run_aqi_cycle
+        await run_aqi_cycle()
+        return JSONResponse({"status": "complete", "edges_with_aqi": len(graph_cache.edge_aqi)})
+    app.add_route("/internal/run-aqi-scrape", run_aqi_scrape, methods=["POST"])
+
+    async def run_traffic_scrape(request):
+        from scheduler import run_traffic_cycle
+        await run_traffic_cycle()
+        return JSONResponse({"status": "complete", "edges": graph_cache.edge_count})
+    app.add_route("/internal/run-traffic-scrape", run_traffic_scrape, methods=["POST"])
+    
+    async def expire_incidents(request):
+        result = await db.execute("""
+            UPDATE live_incidents
+            SET is_active = FALSE
+            WHERE is_active = TRUE
+              AND expires_at < NOW();
+        """)
+        expired = int(result.split()[-1])
+        await graph_cache.refresh_incident_costs(db)
+        return JSONResponse({
+            "status":  "expired",
+            "expired": expired,
+            "active_edges": graph_cache.incident_count,
+        })
+    app.add_route("/internal/expire-incidents", expire_incidents, methods=["POST"])
+    
+    async def internal_compare_route_profiles(request):
+        body = await request.json()
+        import asyncio
+        from routing import find_route, get_profile_weights
+        from models import RouteProfile
+        hour, hour_err = _safe_parse_hour(body.get("departure_time"))
+        if hour_err:
+            return JSONResponse({"error": hour_err}, status_code=422)
+
+        results = await asyncio.gather(*[
+            find_route(
+                origin_lat=body["origin_lat"], origin_lon=body["origin_lon"],
+                dest_lat=body["dest_lat"], dest_lon=body["dest_lon"],
+                alpha=a, beta=b, gamma=g, profile=p, hour=hour
+            )
+            for p in RouteProfile for a, b, g in [get_profile_weights(p)]
+        ], return_exceptions=True)
+
+        routes = [r.model_dump() for r in results if r and not isinstance(r, Exception)]
+        if not routes:
+            return JSONResponse({"error": "No road found"}, status_code=404)
+        return JSONResponse({"routes": routes})
+    app.add_route("/internal/compare_route_profiles", internal_compare_route_profiles, methods=["POST"])
+
+    async def internal_get_safe_route(request):
+        body = await request.json()
+        from routing import find_route, get_profile_weights
+        from models import RouteProfile
+        hour, hour_err = _safe_parse_hour(body.get("departure_time"))
+        if hour_err:
+            return JSONResponse({"error": hour_err}, status_code=422)
+            
+        profile = RouteProfile(body.get("profile", "balanced"))
+        alpha, beta, gamma = get_profile_weights(profile)
+        
+        route = await find_route(
+            origin_lat=body["origin_lat"], origin_lon=body["origin_lon"],
+            dest_lat=body["dest_lat"], dest_lon=body["dest_lon"],
+            alpha=alpha, beta=beta, gamma=gamma, profile=profile, hour=hour
+        )
+        if not route:
+            return JSONResponse({"error": "No route found"}, status_code=404)
+            
+        return JSONResponse(route.model_dump())
+    app.add_route("/internal/get_safe_route", internal_get_safe_route, methods=["POST"])
+    
     original_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
@@ -487,7 +590,17 @@ if __name__ == "__main__":
             await db.connect()
             node_count = await graph_cache.load(db)
             print(f"[safemaps-mcp] graph loaded: {node_count:,} nodes", flush=True)
+            
+            from scheduler import start_scheduler, stop_scheduler
+            scheduler = start_scheduler()
+            
             yield
+            
+            stop_scheduler(scheduler)
+            try:
+                await db.disconnect()
+            except Exception:
+                pass
 
     app.router.lifespan_context = wrapped_lifespan
 

@@ -74,8 +74,6 @@ class MetricsCollector:
     # ── Prometheus text format ────────────────────────────────────────
 
     def to_prometheus(self) -> str:
-        from graph_cache import graph_cache
-
         lines: list[str] = []
 
         def gauge(name: str, value: float, help_text: str = "") -> None:
@@ -111,13 +109,12 @@ class MetricsCollector:
             gauge("route_latency_p95_ms", round(self._percentile(95), 2),
                   "95th percentile route latency (ms, last 1000 requests)")
 
-        # Graph cache stats
-        is_loaded = 1 if graph_cache.is_loaded else 0
-        gauge("graph_cache_loaded",       is_loaded,
+        # Graph cache stats removed from backend metrics (managed by MCP)
+        gauge("graph_cache_loaded",       0,
               "1 if graph cache is loaded, 0 otherwise")
-        gauge("graph_cache_nodes_total",  len(graph_cache.nodes),
+        gauge("graph_cache_nodes_total",  0,
               "Total road nodes in in-memory cache")
-        gauge("graph_cache_edges_total",  len(graph_cache.edge_data),
+        gauge("graph_cache_edges_total",  0,
               "Total road edges in in-memory cache")
 
         lines.append(f"# generated_at {time.time():.3f}")

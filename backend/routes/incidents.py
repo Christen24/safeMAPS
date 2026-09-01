@@ -15,7 +15,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from database import db
-from graph_cache import graph_cache
 from models import IncidentLayerResponse
 
 logger = logging.getLogger(__name__)
@@ -113,5 +112,5 @@ async def get_active_incidents(
         features=features,
         total=len(features),
         as_of=datetime.now(timezone.utc).isoformat(),
-        cache_age_seconds=round(graph_cache.incident_age_seconds, 1),
+        cache_age_seconds=0.0,
     )
