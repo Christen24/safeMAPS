@@ -45,8 +45,10 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from database import db
-from routing import find_route, get_profile_weights
-from models import RouteProfile
+from mcp_client import mcp_client
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -251,23 +253,25 @@ async def record_trip(
     baseline_hotspots = trip.hotspots_passed
 
     try:
-        fastest = await find_route(
-            origin_lat=trip.origin_lat,
-            origin_lon=trip.origin_lon,
-            dest_lat=trip.dest_lat,
-            dest_lon=trip.dest_lon,
-            *get_profile_weights(RouteProfile.FASTEST),
-            profile=RouteProfile.FASTEST,
-        )
-        if fastest:
-            cb = fastest.cost_breakdown
-            baseline_time     = cb.travel_time_minutes
-            baseline_aqi      = cb.aqi_exposure_cost * 500.0  # reverse normalise
-            baseline_hotspots = cb.accident_hotspots_passed
-    except Exception:
+        fastest_res = await mcp_client.call_tool("get_safe_route", {
+            "origin_lat": trip.origin_lat,
+            "origin_lon": trip.origin_lon,
+            "dest_lat": trip.dest_lat,
+            "dest_lon": trip.dest_lon,
+            "profile": "fastest"
+        })
+        
+        if "error" not in fastest_res and "cost_breakdown" in fastest_res:
+            cb = fastest_res["cost_breakdown"]
+            baseline_time     = cb["travel_time_minutes"]
+            baseline_aqi      = cb["aqi_exposure_cost"] * 500.0  # reverse normalise
+            baseline_hotspots = cb["accident_hotspots_passed"]
+        else:
+            logger.warning(f"MCP baseline route returned error: {fastest_res.get('error', 'Unknown')}")
+    except Exception as e:
         # Baseline computation failed — use the trip's own values
         # (score will be 0 for this trip but won't crash)
-        pass
+        logger.warning(f"MCP baseline computation failed: {e}")
 
     # ── Insert trip ───────────────────────────────────────────────────
     trip_id = await db.fetchval("""

@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException
 
 from models import RouteRequest, RouteResponse, CompareRoutesResponse, RouteProfile
-from routing import find_route, get_profile_weights
+from routing import get_profile_weights
 
 router = APIRouter()
 BANGALORE_TZ = timezone(timedelta(hours=5, minutes=30))

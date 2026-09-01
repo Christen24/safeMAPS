@@ -14,7 +14,6 @@ from fastapi.responses import PlainTextResponse, JSONResponse
 
 from config import settings
 from database import db, DatabaseUnavailable
-from graph_cache import graph_cache
 from metrics import metrics
 from scheduler import start_scheduler, stop_scheduler
 from routes.route import router as route_router
@@ -61,8 +60,13 @@ async def lifespan(app: FastAPI):
     # Expose a shared internal httpx client on the app for proxying to MCP
     app.state.http_client = httpx.AsyncClient(timeout=10.0)
     
+    await db.connect()
     yield
     
+    try:
+        await db.disconnect()
+    except Exception:
+        pass
     await app.state.http_client.aclose()
     logger.info("Shutdown complete.")
 
