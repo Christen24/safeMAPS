@@ -14,6 +14,7 @@ import math
 import uuid
 from typing import Optional
 
+from database import db
 from graph_cache import graph_cache
 from spatial_queries import snap_to_nearest_node
 from models import (
@@ -419,6 +420,9 @@ async def find_route(
     total_aqi_weighted = 0.0
     max_aqi = 0.0
     hotspots = 0
+    edge_geometries = await graph_cache.fetch_edge_geometries(
+        db, [eid for _from_node, _to_node, eid in path_steps]
+    )
 
     for from_node, to_node, eid in path_steps:
         ed = edge_data.get(eid, {})
@@ -443,7 +447,7 @@ async def find_route(
             ed.get("road_type"),
         )
 
-        raw_geom = ed.get("geometry", {"type": "LineString", "coordinates": []})
+        raw_geom = edge_geometries.get(eid, {"type": "LineString", "coordinates": []})
         geom = raw_geom
         if "coordinates" in geom:
             coords = _orient_edge_coords(geom["coordinates"], from_node, to_node, nodes)

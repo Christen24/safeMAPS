@@ -9,7 +9,7 @@ reloading the full graph (~200 MB, several seconds):
   refresh_aqi_costs(db)
     Re-runs only the AQI spatial join query and updates self.edge_aqi.
     Called by the scheduler after every AQI scrape cycle (~15 min).
-    The graph topology (nodes, adjacency, geometry) is unchanged.
+    The graph topology (nodes, adjacency) is unchanged.
 
   update_speeds(edge_speeds: dict[int, float])
     Receives a {edge_id: speed_kmh} dict from the traffic scraper
@@ -148,8 +148,7 @@ class GraphCache:
                 road_type,
                 length_m,
                 speed_kmh,
-                oneway,
-                ST_AsGeoJSON(geom) AS geometry
+                oneway
             FROM road_segments;
         """)
 
@@ -171,14 +170,7 @@ class GraphCache:
             if not oneway:
                 adjacency.setdefault(tgt, []).append((src, eid, length_m, speed_kmh))
 
-            geom_str = row["geometry"]
-            geom = (
-                json.loads(geom_str)
-                if geom_str
-                else {"type": "LineString", "coordinates": []}
-            )
             edge_data[eid] = {
-                "geometry": geom,
                 "length_m": length_m,
                 "speed_kmh": speed_kmh,
                 "base_speed_kmh": speed_kmh,   # OSM free-flow speed — never overwritten
@@ -221,6 +213,36 @@ class GraphCache:
 
         await self._prefetch_edge_costs(db)
         return len(nodes)
+
+    async def fetch_edge_geometries(self, db, edge_ids: list[int]) -> dict[int, dict]:
+        """
+        Fetch GeoJSON geometries for the final route edges only.
+
+        The startup graph cache intentionally excludes full edge geometry.
+        Route assembly calls this once per selected path and preserves path
+        ordering by iterating the original path steps after this lookup.
+        """
+        unique_edge_ids = list(dict.fromkeys(edge_ids))
+        if not unique_edge_ids:
+            return {}
+
+        rows = await db.fetch("""
+            SELECT
+                id,
+                ST_AsGeoJSON(geom) AS geometry
+            FROM road_segments
+            WHERE id = ANY($1::bigint[]);
+        """, unique_edge_ids)
+
+        geometries: dict[int, dict] = {}
+        for row in rows:
+            geom_str = row["geometry"]
+            geometries[row["id"]] = (
+                json.loads(geom_str)
+                if geom_str
+                else {"type": "LineString", "coordinates": []}
+            )
+        return geometries
 
     # ── Full cost prefetch (called after load) ─────────────────────────
 
