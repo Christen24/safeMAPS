@@ -14,13 +14,7 @@ export default function ToolCallCard({ event }) {
                     <span className="ai-tool-time">{event.duration_ms} ms</span>
                 )}
             </button>
-            <div className="ai-tool-args">
-                {Object.entries(event.arguments || {}).slice(0, 4).map(([key, value]) => (
-                    <span key={key}>
-                        <b>{key}</b> {String(value)}
-                    </span>
-                ))}
-            </div>
+
             {open && (
                 <pre className="ai-tool-result">
                     {JSON.stringify(event.result || event.arguments || {}, null, 2)}

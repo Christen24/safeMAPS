@@ -3600,6 +3600,119 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
 }
 .ai-tools-menu li:hover { background: var(--surface-2); color: var(--text-primary); }
 
+/* ── Route profile strip ──────────────────────────────────── */
+.ai-profile-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border-bottom: 1px solid var(--border-dim);
+    background: var(--surface-0);
+    flex-shrink: 0;
+}
+
+.ai-profile-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 0.55rem 0.4rem;
+    border-right: 1px solid var(--border-dim);
+    position: relative;
+    transition: background var(--ease-snap), border-bottom-color var(--ease-snap);
+    border-bottom: 2px solid transparent;
+    cursor: default;
+}
+.ai-profile-card:last-child { border-right: none; }
+
+.ai-profile-card.active {
+    background: rgba(var(--prof-color, 78, 203, 141), 0.06);
+    border-bottom-color: var(--prof-color, #4ecb8d);
+}
+.ai-profile-card.highlight {
+    background: rgba(var(--prof-color, 78, 203, 141), 0.12);
+    border-bottom-color: var(--prof-color, #4ecb8d);
+    box-shadow: inset 0 0 0 1px rgba(var(--prof-color, 78, 203, 141), 0.15);
+}
+
+/* CSS custom properties with color need special handling for rgba() — use solid color */
+.ai-profile-card[style*="4fc3e0"].active  { background: rgba(79,195,224,0.07); }
+.ai-profile-card[style*="4ecb8d"].active  { background: rgba(78,203,141,0.07); }
+.ai-profile-card[style*="f0a93e"].active  { background: rgba(240,169,62,0.07); }
+.ai-profile-card[style*="9b87e8"].active  { background: rgba(155,135,232,0.07); }
+
+.ai-profile-icon {
+    font-size: 1.05rem;
+    line-height: 1;
+}
+.ai-profile-label {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.ai-profile-card.active .ai-profile-label,
+.ai-profile-card.highlight .ai-profile-label {
+    color: var(--prof-color, var(--acid));
+}
+.ai-profile-sub {
+    font-size: 0.58rem;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+}
+.ai-profile-dot {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.4rem;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--prof-color, var(--acid));
+    box-shadow: 0 0 6px var(--prof-color, var(--acid));
+}
+
+/* ── Basemap toggle ────────────────────────────────────────── */
+.ai-basemap-toggle {
+    position: absolute;
+    top: 0.7rem;
+    right: 0.7rem;
+    z-index: 500;
+    display: flex;
+    gap: 0;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--border-dim);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+}
+.ai-basemap-toggle button {
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.65rem;
+    cursor: pointer;
+    transition: all var(--ease-snap);
+    white-space: nowrap;
+}
+.ai-basemap-toggle button + button {
+    border-left: 1px solid var(--border-dim);
+}
+.ai-basemap-toggle button.active {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+.ai-basemap-toggle button:hover:not(.active) {
+    background: var(--surface-1);
+    color: var(--text-secondary);
+}
+
 /* The map itself fills remaining space */
 .ai-map {
     position: relative;

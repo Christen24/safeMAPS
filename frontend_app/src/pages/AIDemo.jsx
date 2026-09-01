@@ -10,39 +10,69 @@ const PROMPTS = [
     'Show accident risk near Hebbal',
 ];
 
+// ── Routing profiles — mirrors primary page ───────────────────
+const PROFILES = [
+    { id: 'fastest',    icon: '⚡', label: 'Fastest',    sub: 'Min. Time',     color: '#4fc3e0' },
+    { id: 'safest',     icon: '🛡️', label: 'Safest',     sub: 'Max. Security', color: '#4ecb8d' },
+    { id: 'healthiest', icon: '🫁', label: 'Healthiest', sub: 'Low AQI',       color: '#f0a93e' },
+    { id: 'balanced',   icon: '⚖️', label: 'Balanced',   sub: 'Weighted',      color: '#9b87e8' },
+];
+
 function extractRoutes(toolEvents) {
     const routes = [];
     for (const event of toolEvents) {
         const result = event.result;
         if (!result || event.status !== 'completed') continue;
         if (result.geometry) routes.push(result);
-        if (Array.isArray(result.routes)) routes.push(...result.routes.filter(route => route.geometry));
+        if (Array.isArray(result.routes)) routes.push(...result.routes.filter(r => r.geometry));
     }
     return routes;
 }
 
+// Detect which profiles are present in the returned routes
+function getActiveProfiles(routes) {
+    const ids = new Set(routes.map(r => r.profile || r.route_id).filter(Boolean));
+    return ids;
+}
+
+// Find the most recently mentioned profile from AI messages/tool calls
+function inferHighlightedProfile(messages, toolEvents) {
+    const text = [
+        ...messages.map(m => m.content),
+        ...toolEvents.map(e => e.tool),
+    ].join(' ').toLowerCase();
+
+    if (text.includes('healthiest')) return 'healthiest';
+    if (text.includes('safest'))     return 'safest';
+    if (text.includes('fastest'))    return 'fastest';
+    if (text.includes('balanced'))   return 'balanced';
+    return null;
+}
+
 export default function AIDemo({ onBack }) {
-    const [messages, setMessages] = useState([]);
-    const [input, setInput] = useState('');
+    const [messages, setMessages]     = useState([]);
+    const [input, setInput]           = useState('');
     const [toolEvents, setToolEvents] = useState([]);
-    const [status, setStatus] = useState({ mcp: 'connecting', tool_count: 0, tools: [] });
-    const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
-    const [loading, setLoading] = useState(false);
-    const abortRef = useRef(null);
-    const routes = useMemo(() => extractRoutes(toolEvents), [toolEvents]);
+    const [status, setStatus]         = useState({ mcp: 'connecting', tool_count: 0, tools: [] });
+    const [sessionId, setSessionId]   = useState(() => crypto.randomUUID());
+    const [loading, setLoading]       = useState(false);
+    const abortRef                    = useRef(null);
+
+    const routes          = useMemo(() => extractRoutes(toolEvents), [toolEvents]);
+    const activeProfiles  = useMemo(() => getActiveProfiles(routes), [routes]);
+    const highlightedProf = useMemo(() => inferHighlightedProfile(messages, toolEvents), [messages, toolEvents]);
 
     useEffect(() => {
         let cancelled = false;
         getAIStatus()
-            .then(data => { if (!cancelled) setStatus(data); })
-            .catch(error => {
-                if (!cancelled) setStatus({ mcp: 'unavailable', tool_count: 0, tools: [], error: error.message });
-            });
+            .then(data  => { if (!cancelled) setStatus(data); })
+            .catch(err  => { if (!cancelled) setStatus({ mcp: 'unavailable', tool_count: 0, tools: [], error: err.message }); });
         return () => { cancelled = true; };
     }, []);
 
     const handleEvent = event => {
         if (event.session_id) setSessionId(event.session_id);
+
         if (event.type === 'mcp_status') {
             setStatus(prev => ({ ...prev, mcp: event.status, tool_count: event.tool_count }));
         }
@@ -52,17 +82,17 @@ export default function AIDemo({ onBack }) {
         }
         if (event.type === 'tool_result') {
             setToolEvents(prev => {
-                const next = [...prev];
+                const next  = [...prev];
                 const index = [...next].reverse().findIndex(item =>
                     item.tool === event.tool && item.status === 'running'
                 );
                 if (index >= 0) {
-                    const realIndex = next.length - 1 - index;
+                    const realIndex  = next.length - 1 - index;
                     next[realIndex] = {
                         ...next[realIndex],
-                        status: event.result?.error ? 'failed' : 'completed',
+                        status:      event.result?.error ? 'failed' : 'completed',
                         duration_ms: event.duration_ms,
-                        result: event.result,
+                        result:      event.result,
                     };
                 }
                 return next;
@@ -85,7 +115,7 @@ export default function AIDemo({ onBack }) {
         }
         if (event.type === 'done') {
             setLoading(false);
-            setMessages(prev => prev.map(item => ({ ...item, streaming: false })));
+            setMessages(prev => prev.map(m => ({ ...m, streaming: false })));
         }
     };
 
@@ -98,15 +128,10 @@ export default function AIDemo({ onBack }) {
         abortRef.current?.abort();
         abortRef.current = new AbortController();
         try {
-            await streamAIChat({
-                message,
-                sessionId,
-                signal: abortRef.current.signal,
-                onEvent: handleEvent,
-            });
-        } catch (error) {
+            await streamAIChat({ message, sessionId, signal: abortRef.current.signal, onEvent: handleEvent });
+        } catch (err) {
             setLoading(false);
-            setMessages(prev => [...prev, { role: 'assistant', content: error.message }]);
+            setMessages(prev => [...prev, { role: 'assistant', content: err.message }]);
         }
     };
 
@@ -130,6 +155,7 @@ export default function AIDemo({ onBack }) {
             </header>
 
             <main className="ai-demo-main">
+                {/* ── Chat panel ── */}
                 <section className="ai-chat-panel">
                     <div className="ai-chat-scroll">
                         {!messages.length && (
@@ -158,24 +184,45 @@ export default function AIDemo({ onBack }) {
 
                         {loading && <div className="ai-progress">Understanding request...</div>}
                     </div>
-                    <form className="ai-input-bar" onSubmit={event => { event.preventDefault(); submit(); }}>
+
+                    <form className="ai-input-bar" onSubmit={e => { e.preventDefault(); submit(); }}>
                         <input
                             value={input}
-                            onChange={event => setInput(event.target.value)}
+                            onChange={e => setInput(e.target.value)}
                             placeholder="Ask SafeMAPS..."
                             maxLength={1200}
                         />
-                        <button type="submit" disabled={loading || !input.trim()}>
-                            Send
-                        </button>
+                        <button type="submit" disabled={loading || !input.trim()}>Send</button>
                     </form>
                 </section>
 
+                {/* ── Map panel ── */}
                 <section className="ai-map-panel">
+                    {/* Route profile strip */}
+                    <div className="ai-profile-strip">
+                        {PROFILES.map(p => {
+                            const isActive    = activeProfiles.has(p.id);
+                            const isHighlight = highlightedProf === p.id;
+                            return (
+                                <div
+                                    key={p.id}
+                                    className={`ai-profile-card ${isActive ? 'active' : ''} ${isHighlight ? 'highlight' : ''}`}
+                                    style={{ '--prof-color': p.color }}
+                                >
+                                    <span className="ai-profile-icon">{p.icon}</span>
+                                    <span className="ai-profile-label">{p.label}</span>
+                                    <span className="ai-profile-sub">{p.sub}</span>
+                                    {isActive && <span className="ai-profile-dot" />}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Map toolbar */}
                     <div className="ai-map-toolbar">
                         <div>
                             <span>Route Visualization</span>
-                            <b>{routes.length ? `${routes.length} route${routes.length === 1 ? '' : 's'}` : 'Waiting for MCP route result'}</b>
+                            <b>{routes.length ? `${routes.length} route${routes.length === 1 ? '' : 's'}` : 'Waiting for MCP result'}</b>
                         </div>
                         <details className="ai-tools-menu">
                             <summary>MCP Tools</summary>
@@ -184,6 +231,7 @@ export default function AIDemo({ onBack }) {
                             </ul>
                         </details>
                     </div>
+
                     <AIMap routes={routes} />
                 </section>
             </main>
