@@ -1,8 +1,7 @@
 # 🗺️ SafeMAPS — Health & Safety-Aware Routing for Bengaluru
 
-**Live Demo:** _Add your deployed SafeMAPS URL here_
 
-> **Recruiter summary:** SafeMAPS is a health-and-safety-aware routing platform for Bengaluru that goes beyond shortest-path navigation by combining **travel time, air-quality exposure, accident risk, live incidents, and time-of-day risk** into a custom routing engine. It uses a **custom weighted A\*** search (with bidirectional A\* for longer routes), **PostgreSQL/PostGIS**, an **LSTM model for AQI forecasting**, live data ingestion pipelines, and an **MCP-powered AI assistant** that can reason over the routing tools and explain route trade-offs in natural language.
+> **Summary:** SafeMAPS is a health-and-safety-aware routing platform for Bengaluru that goes beyond shortest-path navigation by combining **travel time, air-quality exposure, accident risk, live incidents, and time-of-day risk** into a custom routing engine. It uses a **custom weighted A\*** search (with bidirectional A\* for longer routes), **PostgreSQL/PostGIS**, an **LSTM model for AQI forecasting**, live data ingestion pipelines, and an **MCP-powered AI assistant** that can reason over the routing tools and explain route trade-offs in natural language.
 
 > SafeMAPS is a Bengaluru-focused portfolio project. It is designed as a planning and decision-support system; modeled risk scores are not safety guarantees.
 
