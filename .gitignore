@@ -89,3 +89,9 @@ data_pipeline/.cpcb_cache/
 data_pipeline/models/
 data_pipeline/*.pt
 data_pipeline/*.pth
+
+# Migration artifacts
+restore_list.txt
+restore_list_filtered.txt
+safemaps_data_migration.sql
+safemaps_deploy.dump

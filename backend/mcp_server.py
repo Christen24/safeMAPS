@@ -76,7 +76,7 @@ mcp = FastMCP(
     "SafeMAPS",
     lifespan=lifespan,
     host="0.0.0.0",
-    port=int(os.getenv("MCP_PORT", "8001")),
+    port=int(os.getenv("PORT", os.getenv("MCP_PORT", "8001"))),
     # Streamable-HTTP transport — reachable at /mcp
 )
 
@@ -605,4 +605,5 @@ if __name__ == "__main__":
     app.router.lifespan_context = wrapped_lifespan
 
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("MCP_PORT", "8001")))
+    port = int(os.getenv("PORT", os.getenv("MCP_PORT", "8001")))
+    uvicorn.run(app, host="0.0.0.0", port=port)
