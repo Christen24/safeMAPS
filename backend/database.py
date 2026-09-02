@@ -36,6 +36,7 @@ class Database:
             max_size=10,
             command_timeout=60,
             statement_cache_size=0,
+            ssl=settings.postgres_sslmode if settings.postgres_sslmode != "disable" else None,
         )
 
     async def disconnect(self):

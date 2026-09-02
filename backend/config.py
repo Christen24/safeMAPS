@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     postgres_db: str = "healthroute"
     postgres_user: str = "healthroute"
     postgres_password: str = "changeme_in_production"
+    postgres_sslmode: str = "disable"  # Set to 'require' for Supabase
 
     # --- API Keys ---
     waqi_api_token: Optional[str] = None
