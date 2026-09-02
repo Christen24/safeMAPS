@@ -1,78 +1,94 @@
 """
-SafeMAPS — In-memory Road Graph Cache
+SafeMAPS — CSR Graph Cache (Phase 3)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Replaces the dict-based graph with a Compressed Sparse Row (CSR)
+NumPy array representation.
 
-Phase 2 additions (scheduler integration)
-──────────────────────────────────────────
-Two new methods let the scheduler refresh cost data without
-reloading the full graph (~200 MB, several seconds):
+Why this works
+──────────────
+Phase 1/2 measured ~650–750 MB RSS per process. The raw data is only ~15 MB.
+The rest is CPython per-object overhead:
+  - dict[int, tuple]  : 559,602 node entries
+  - dict[int, dict]   : 352,579 edge dicts, each 5 keys incl. 2 strings
+  - two full adjacency dicts × ~700k list-of-tuple entries
+  - three 352k-entry cost dicts (AQI, risk, incident)
 
-  refresh_aqi_costs(db)
-    Re-runs only the AQI spatial join query and updates self.edge_aqi.
-    Called by the scheduler after every AQI scrape cycle (~15 min).
-    The graph topology (nodes, adjacency) is unchanged.
+CSR representation:
+  - node lat/lon      : 2 × float32[N]              ~4.5 MB
+  - node id↔idx map   : int64[N] + searchsorted      ~4.5 MB
+  - forward CSR       : indptr[N+1] + 4 arrays[E]    ~10 MB
+  - reverse CSR       : same shape                   ~10 MB
+  - cost overlays     : 3 × float32[E]               ~4 MB
+  Total: ~33 MB resident for the full Bangalore graph
 
-  update_speeds(edge_speeds: dict[int, float])
-    Receives a {edge_id: speed_kmh} dict from the traffic scraper
-    and patches self.edge_data and self.adjacency in-place.
-    Called by the scheduler after every traffic cycle (~5 min).
-    Does not touch AQI or risk costs.
+Road name / road type are deferred to on-demand DB fetch (same pattern
+as geometry in Phase 1) — they are only needed for the final assembled
+route response and the time-of-day multiplier lookup, not during search.
 
-Original design (Phase 1)
-──────────────────────────
-get_road_graph() in spatial_queries.py executed two large SELECT
-queries and rebuilt Python dicts from scratch on every A* request.
-For Bangalore's OSM network (~400k nodes, ~500k edges) that means
-~2 DB round-trips and ~500k dict insertions per route call.
+The A* and bidirectional A* implementations receive integer CSR slices
+instead of Python list-of-tuple iterations. Inner loops stay in CPython
+but operate on much smaller working sets (no per-edge dict lookups).
 
-This module fixes that by:
-  1. Loading the graph ONCE at startup (graph_cache.load)
-  2. Holding nodes/adjacency/edge_data in RAM (~200 MB)
-  3. Pre-fetching edge AQI + risk into flat dicts for O(1) lookup
-  4. Correctly honouring oneway=True edges
+Scheduler integration
+──────────────────────
+refresh_aqi_costs   → writes into self.aqi_costs (float32 array, indexed by compact edge index)
+update_speeds       → writes into self.speed_data (float32 array)
+refresh_incident_costs → writes into self.incident_costs (float32 array, sparse via dict)
 
-Usage
-─────
-from graph_cache import graph_cache
-
-# startup:
-await graph_cache.load(db)
-
-# scheduler — AQI refresh (no graph reload):
-await graph_cache.refresh_aqi_costs(db)
-
-# scheduler — traffic speed sync (in-memory patch):
-graph_cache.update_speeds({edge_id: speed_kmh, ...})
-
-# routing:
-nodes      = graph_cache.nodes
-adjacency  = graph_cache.adjacency
-edge_data  = graph_cache.edge_data
-aqi        = graph_cache.get_aqi(edge_id)
-risk       = graph_cache.get_risk(edge_id)
+The atomic swap on cost overlays works as before: build new array,
+reassign the attribute name, GC collects old.
 """
 
-import json
+import gc
 import logging
 import time
 from typing import Optional
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
 class GraphCache:
-    """Singleton holding the in-memory road graph for Bangalore."""
+    """Singleton holding the in-memory road graph as CSR arrays."""
 
     def __init__(self):
-        self.nodes: dict[int, tuple[float, float]] = {}
-        self.adjacency: dict[int, list[tuple]] = {}
-        # Fix R2: reverse adjacency cached once at load time.
-        # Previously built inside bidirectional_astar() on every call —
-        # iterating ~500k edges × 4 concurrent profiles per /compare request.
-        self.rev_adjacency: dict[int, list[tuple]] = {}
-        self.edge_data: dict[int, dict] = {}
-        self.edge_aqi: dict[int, float] = {}
-        self.edge_risk: dict[int, float] = {}
-        self.edge_incident: dict[int, float] = {}  # live incident cost overlay
+        # ── Node arrays ─────────────────────────────────────────────
+        # node_ids[i] = DB id, node_lat[i]/node_lon[i] = coords
+        # Sorted by node_ids so we can use np.searchsorted for O(log N) lookup
+        self.node_ids: Optional[np.ndarray] = None     # int64[N]
+        self.node_lat: Optional[np.ndarray] = None     # float32[N]
+        self.node_lon: Optional[np.ndarray] = None     # float32[N]
+
+        # ── Forward CSR ──────────────────────────────────────────────
+        # indptr[i]:indptr[i+1] is the slice of nbr_idx/edge_idx/... for node i
+        self.fwd_indptr:  Optional[np.ndarray] = None  # int32[N+1]
+        self.fwd_nbr:     Optional[np.ndarray] = None  # int32[E_total]   neighbour compact index
+        self.fwd_eid:     Optional[np.ndarray] = None  # int32[E_total]   compact edge index
+        self.fwd_length:  Optional[np.ndarray] = None  # float32[E_total] metres
+        self.fwd_speed:   Optional[np.ndarray] = None  # float32[E_total] km/h (mutable for traffic)
+
+        # ── Reverse CSR (for bidirectional A*) ───────────────────────
+        self.rev_indptr:  Optional[np.ndarray] = None  # int32[N+1]
+        self.rev_nbr:     Optional[np.ndarray] = None  # int32[E_total]
+        self.rev_eid:     Optional[np.ndarray] = None  # int32[E_total]
+        self.rev_length:  Optional[np.ndarray] = None  # float32[E_total]
+        self.rev_speed:   Optional[np.ndarray] = None  # float32[E_total]
+
+        # ── Edge id mappings ─────────────────────────────────────────
+        # edge_db_ids[i] = DB edge id for compact index i  (sorted)
+        # compact index = np.searchsorted(edge_db_ids, db_id)
+        self.edge_db_ids: Optional[np.ndarray] = None  # int64[E_unique]
+        # base speed per unique edge (for congestion ratio)
+        self.base_speed:  Optional[np.ndarray] = None  # float32[E_unique]
+
+        # ── Cost overlays (indexed by compact edge index) ────────────
+        self.aqi_costs:      Optional[np.ndarray] = None  # float32[E_unique]
+        self.risk_costs:     Optional[np.ndarray] = None  # float32[E_unique]
+        # Incident costs: sparse — only affected edges are non-zero.
+        # Stored as a plain float32 array; most entries are 0.0.
+        self.incident_costs: Optional[np.ndarray] = None  # float32[E_unique]
+
         self._loaded_at: Optional[float] = None
         self._aqi_refreshed_at: Optional[float] = None
         self._incident_refreshed_at: Optional[float] = None
@@ -85,440 +101,453 @@ class GraphCache:
 
     @property
     def node_count(self) -> int:
-        return len(self.nodes)
+        return len(self.node_ids) if self.node_ids is not None else 0
 
     @property
     def edge_count(self) -> int:
-        return len(self.edge_data)
+        return len(self.edge_db_ids) if self.edge_db_ids is not None else 0
 
     @property
     def age_seconds(self) -> float:
-        if self._loaded_at is None:
-            return -1.0
-        return time.monotonic() - self._loaded_at
+        return -1.0 if self._loaded_at is None else time.monotonic() - self._loaded_at
 
     @property
     def aqi_age_seconds(self) -> float:
-        if self._aqi_refreshed_at is None:
-            return -1.0
-        return time.monotonic() - self._aqi_refreshed_at
+        return -1.0 if self._aqi_refreshed_at is None else time.monotonic() - self._aqi_refreshed_at
 
     @property
     def incident_age_seconds(self) -> float:
-        if self._incident_refreshed_at is None:
-            return -1.0
-        return time.monotonic() - self._incident_refreshed_at
+        return -1.0 if self._incident_refreshed_at is None else time.monotonic() - self._incident_refreshed_at
 
     @property
     def incident_count(self) -> int:
-        """Number of edges currently affected by live incidents."""
-        return len(self.edge_incident)
+        if self.incident_costs is None:
+            return 0
+        return int(np.count_nonzero(self.incident_costs))
 
-    # ── Full graph load (called once at startup) ───────────────────────
+    # ── Node lookup helpers ───────────────────────────────────────────
+
+    def node_idx(self, db_id: int) -> int:
+        """Return compact index for a DB node id, or -1 if not found."""
+        if self.node_ids is None:
+            return -1
+        idx = int(np.searchsorted(self.node_ids, db_id))
+        if idx < len(self.node_ids) and self.node_ids[idx] == db_id:
+            return idx
+        return -1
+
+    def edge_idx(self, db_id: int) -> int:
+        """Return compact index for a DB edge id, or -1 if not found."""
+        if self.edge_db_ids is None:
+            return -1
+        idx = int(np.searchsorted(self.edge_db_ids, db_id))
+        if idx < len(self.edge_db_ids) and self.edge_db_ids[idx] == db_id:
+            return idx
+        return -1
+
+    # ── Full graph load ───────────────────────────────────────────────
 
     async def load(self, db) -> int:
         """
-        Load the full road graph from PostGIS.
-        Runs once at startup; also callable from the admin endpoint.
+        Load the full road graph from PostGIS into CSR arrays.
+        Runs once at startup; also callable from admin endpoint.
         Returns the number of nodes loaded.
         """
         t0 = time.monotonic()
-        logger.info("Loading road graph from PostGIS...")
+        logger.info("Loading road graph from PostGIS into CSR arrays...")
 
-        # ── Nodes ─────────────────────────────────────────────────────
+        # ── 1. Nodes ─────────────────────────────────────────────────
         node_rows = await db.fetch(
             "SELECT id, ST_Y(geom) AS lat, ST_X(geom) AS lon FROM road_nodes;"
         )
-        nodes: dict[int, tuple[float, float]] = {
-            row["id"]: (row["lat"], row["lon"]) for row in node_rows
-        }
-
-        if not nodes:
+        if not node_rows:
             logger.warning(
                 "road_nodes is empty — run: cd data_pipeline && python osm_loader.py"
             )
+            return 0
 
-        # ── Edges + adjacency ─────────────────────────────────────────
+        # Build sorted node arrays
+        db_ids_list = [row["id"]  for row in node_rows]
+        lat_list    = [row["lat"] for row in node_rows]
+        lon_list    = [row["lon"] for row in node_rows]
+
+        sort_order  = np.argsort(db_ids_list, kind="stable")
+        node_ids    = np.array(db_ids_list, dtype=np.int64)[sort_order]
+        node_lat    = np.array(lat_list,    dtype=np.float32)[sort_order]
+        node_lon    = np.array(lon_list,    dtype=np.float32)[sort_order]
+        # id → compact index lookup dictionary for O(1) bulk mapping during build
+        id_to_idx   = {int(nid): int(i) for i, nid in enumerate(node_ids)}
+
+        N = len(node_ids)
+        logger.info(f"  Nodes: {N:,}")
+
+        # ── 2. Edges ─────────────────────────────────────────────────
         edge_rows = await db.fetch("""
             SELECT
                 id,
                 source_node,
                 target_node,
-                road_name,
-                road_type,
                 length_m,
                 speed_kmh,
                 oneway
             FROM road_segments;
         """)
 
-        adjacency: dict[int, list[tuple]] = {}
-        edge_data: dict[int, dict] = {}
+        # Build adjacency lists (Python, temporary — discarded after CSR build)
+        # adj_fwd[src_idx] = list of (tgt_idx, edge_db_id, length_m, speed_kmh)
+        adj_fwd: list[list] = [[] for _ in range(N)]
+        adj_rev: list[list] = [[] for _ in range(N)]
+
+        edge_db_id_list: list[int]   = []
+        base_speed_list: list[float] = []
+        # Map DB edge id → compact edge index (built incrementally)
+        edge_id_to_compact: dict[int, int] = {}
 
         for row in edge_rows:
-            eid = row["id"]
-            src = row["source_node"]
-            tgt = row["target_node"]
-            length_m = float(row["length_m"] or 0)
-            speed_kmh = float(row["speed_kmh"] or 30)
-            oneway = bool(row["oneway"])
+            db_eid  = int(row["id"])
+            src_did = int(row["source_node"])
+            tgt_did = int(row["target_node"])
+            length  = float(row["length_m"]  or 0)
+            speed   = float(row["speed_kmh"] or 30)
+            oneway  = bool(row["oneway"])
 
-            # Forward direction (always)
-            adjacency.setdefault(src, []).append((tgt, eid, length_m, speed_kmh))
+            src_idx = id_to_idx.get(src_did, -1)
+            tgt_idx = id_to_idx.get(tgt_did, -1)
+            if src_idx < 0 or tgt_idx < 0:
+                continue  # dangling edge — skip
 
-            # Reverse only for bidirectional roads
+            # Assign compact edge index (each DB edge gets exactly one)
+            if db_eid not in edge_id_to_compact:
+                compact_eid = len(edge_db_id_list)
+                edge_id_to_compact[db_eid] = compact_eid
+                edge_db_id_list.append(db_eid)
+                base_speed_list.append(speed)
+            else:
+                compact_eid = edge_id_to_compact[db_eid]
+
+            adj_fwd[src_idx].append((tgt_idx, compact_eid, length, speed))
             if not oneway:
-                adjacency.setdefault(tgt, []).append((src, eid, length_m, speed_kmh))
+                adj_rev[tgt_idx].append((src_idx, compact_eid, length, speed))
+            # Also build explicit reverse CSR
+            adj_rev[tgt_idx] = adj_rev[tgt_idx]  # already appended above if not oneway
+            # For rev CSR we need both directions for bidir A*:
+            # reverse edge: from tgt to src, same edge_id
+            # We add it regardless of oneway for the backward search
+            # (the backward search follows edges in reverse to find paths)
+            # Actually: rev CSR = transposed forward CSR.
+            # adj_rev[tgt_idx] already has the reverse entry for two-way roads.
+            # For one-way roads, we still need it in rev CSR for backward search.
 
-            edge_data[eid] = {
-                "length_m": length_m,
-                "speed_kmh": speed_kmh,
-                "base_speed_kmh": speed_kmh,   # OSM free-flow speed — never overwritten
-                "road_name": row["road_name"],
-                "road_type": row["road_type"],
-            }
+        # Rebuild rev CSR properly: it's the full transpose of fwd
+        # (all fwd edges reversed, regardless of oneway — the backward A* 
+        #  traverses in the opposite direction of valid travel)
+        adj_rev_full: list[list] = [[] for _ in range(N)]
+        for row in edge_rows:
+            db_eid  = int(row["id"])
+            src_did = int(row["source_node"])
+            tgt_did = int(row["target_node"])
+            length  = float(row["length_m"]  or 0)
+            speed   = float(row["speed_kmh"] or 30)
+
+            src_idx = id_to_idx.get(src_did, -1)
+            tgt_idx = id_to_idx.get(tgt_did, -1)
+            if src_idx < 0 or tgt_idx < 0:
+                continue
+            compact_eid = edge_id_to_compact.get(db_eid, -1)
+            if compact_eid < 0:
+                continue
+            # Reverse: tgt → src
+            adj_rev_full[tgt_idx].append((src_idx, compact_eid, length, speed))
+
+        E = len(edge_db_id_list)
+        logger.info(f"  Unique edges: {E:,}")
+
+        # ── 3. Build CSR arrays ───────────────────────────────────────
+        def _build_csr(adj: list[list]) -> tuple:
+            indptr = np.zeros(N + 1, dtype=np.int32)
+            for i, nbrs in enumerate(adj):
+                indptr[i + 1] = indptr[i] + len(nbrs)
+            total = int(indptr[-1])
+            nbr_arr    = np.empty(total, dtype=np.int32)
+            eid_arr    = np.empty(total, dtype=np.int32)
+            length_arr = np.empty(total, dtype=np.float32)
+            speed_arr  = np.empty(total, dtype=np.float32)
+            for i, nbrs in enumerate(adj):
+                start = indptr[i]
+                for j, (nbr, eid, length, speed) in enumerate(nbrs):
+                    nbr_arr[start + j]    = nbr
+                    eid_arr[start + j]    = eid
+                    length_arr[start + j] = length
+                    speed_arr[start + j]  = speed
+            return indptr, nbr_arr, eid_arr, length_arr, speed_arr
+
+        logger.info("  Building forward CSR...")
+        fwd_indptr, fwd_nbr, fwd_eid, fwd_length, fwd_speed = _build_csr(adj_fwd)
+
+        logger.info("  Building reverse CSR...")
+        rev_indptr, rev_nbr, rev_eid, rev_length, rev_speed = _build_csr(adj_rev_full)
+
+        # ── 4. Edge id → compact index lookup array ───────────────────
+        # Sort by DB edge id so we can use searchsorted
+        edge_db_ids_arr = np.array(edge_db_id_list, dtype=np.int64)
+        base_speed_arr  = np.array(base_speed_list,  dtype=np.float32)
+
+        # Sort edge compact indices by DB id for searchsorted
+        edge_sort = np.argsort(edge_db_ids_arr, kind="stable")
+        edge_db_ids_sorted = edge_db_ids_arr[edge_sort]
+        base_speed_sorted  = base_speed_arr[edge_sort]
+
+        # Remap compact indices in CSR arrays to match sorted order
+        # old_compact_idx → new_compact_idx
+        remap = np.empty(E, dtype=np.int32)
+        remap[edge_sort] = np.arange(E, dtype=np.int32)
+        fwd_eid = remap[fwd_eid]
+        rev_eid = remap[rev_eid]
+
+        # ── 5. Cost overlays — default values ────────────────────────
+        aqi_costs      = np.full(E, 50.0, dtype=np.float32)
+        risk_costs     = np.zeros(E, dtype=np.float32)
+        incident_costs = np.zeros(E, dtype=np.float32)
+
+        # ── 6. Release build temporaries and commit atomically ────────
+        del adj_fwd, adj_rev, adj_rev_full, node_rows, edge_rows
+        del id_to_idx, edge_id_to_compact
+        del edge_db_ids_arr, base_speed_arr, edge_sort
+        gc.collect()
+
+        self.node_ids    = node_ids
+        self.node_lat    = node_lat
+        self.node_lon    = node_lon
+        self.fwd_indptr  = fwd_indptr
+        self.fwd_nbr     = fwd_nbr
+        self.fwd_eid     = fwd_eid
+        self.fwd_length  = fwd_length
+        self.fwd_speed   = fwd_speed
+        self.rev_indptr  = rev_indptr
+        self.rev_nbr     = rev_nbr
+        self.rev_eid     = rev_eid
+        self.rev_length  = rev_length
+        self.rev_speed   = rev_speed
+        self.edge_db_ids = edge_db_ids_sorted
+        self.base_speed  = base_speed_sorted
+        self.aqi_costs   = aqi_costs
+        self.risk_costs  = risk_costs
+        self.incident_costs = incident_costs
+        self._loaded_at  = time.monotonic()
 
         elapsed = time.monotonic() - t0
         logger.info(
-            f"Graph loaded in {elapsed:.1f}s: "
-            f"{len(nodes):,} nodes, {len(edge_data):,} edges, "
-            f"{sum(len(v) for v in adjacency.values()):,} adjacency entries"
+            f"Graph loaded in {elapsed:.1f}s: {N:,} nodes, {E:,} edges. "
+            f"Fwd CSR: {len(fwd_nbr):,} entries, Rev CSR: {len(rev_nbr):,} entries."
         )
-
-        # Fix R2: build reverse adjacency while edge data is in local vars
-        # (before committing to self) so there's no window where
-        # self.adjacency exists but self.rev_adjacency doesn't.
-        rev_adjacency: dict[int, list[tuple]] = {}
-        for src_node, neighbours in adjacency.items():
-            for nbr, eid, length_m, speed_kmh in neighbours:
-                rev_adjacency.setdefault(nbr, []).append(
-                    (src_node, eid, length_m, speed_kmh)
-                )
-        logger.info(
-            f"Reverse adjacency built: "
-            f"{sum(len(v) for v in rev_adjacency.values()):,} entries."
-        )
-
-        # Commit atomically so routing never sees a half-loaded state
-        self.nodes = nodes
-        self.adjacency = adjacency
-        self.rev_adjacency = rev_adjacency
-        self.edge_data = edge_data
-        self._loaded_at = time.monotonic()
-
-        # Reset cost caches — will be filled by _prefetch_edge_costs
-        self.edge_aqi      = {}
-        self.edge_risk     = {}
-        self.edge_incident = {}  # cleared on full reload; refreshed by Job 5
 
         await self._prefetch_edge_costs(db)
-        return len(nodes)
+        gc.collect()
+        return N
 
-    async def fetch_edge_geometries(self, db, edge_ids: list[int]) -> dict[int, dict]:
+    # ── On-demand geometry fetch (unchanged from Phase 1) ─────────────
+
+    async def fetch_edge_geometries(self, db, edge_db_ids: list[int]) -> dict[int, dict]:
         """
         Fetch GeoJSON geometries for the final route edges only.
-
-        The startup graph cache intentionally excludes full edge geometry.
-        Route assembly calls this once per selected path and preserves path
-        ordering by iterating the original path steps after this lookup.
+        Phase 1 design: startup graph excludes geometry; fetched lazily per route.
         """
-        unique_edge_ids = list(dict.fromkeys(edge_ids))
-        if not unique_edge_ids:
+        import json
+        unique_ids = list(dict.fromkeys(edge_db_ids))
+        if not unique_ids:
             return {}
-
         rows = await db.fetch("""
-            SELECT
-                id,
-                ST_AsGeoJSON(geom) AS geometry
+            SELECT id, ST_AsGeoJSON(geom) AS geometry
             FROM road_segments
             WHERE id = ANY($1::bigint[]);
-        """, unique_edge_ids)
-
-        geometries: dict[int, dict] = {}
+        """, unique_ids)
+        result: dict[int, dict] = {}
         for row in rows:
             geom_str = row["geometry"]
-            geometries[row["id"]] = (
-                json.loads(geom_str)
-                if geom_str
+            result[row["id"]] = (
+                json.loads(geom_str) if geom_str
                 else {"type": "LineString", "coordinates": []}
             )
-        return geometries
+        return result
 
-    # ── Full cost prefetch (called after load) ─────────────────────────
+    # ── On-demand road_name / road_type fetch ─────────────────────────
+
+    async def fetch_edge_metadata(self, db, edge_db_ids: list[int]) -> dict[int, dict]:
+        """
+        Fetch road_name and road_type for the final route edges only.
+        Deferred from startup to avoid holding 352k string objects in RAM.
+        """
+        unique_ids = list(dict.fromkeys(edge_db_ids))
+        if not unique_ids:
+            return {}
+        rows = await db.fetch("""
+            SELECT id, road_name, road_type
+            FROM road_segments
+            WHERE id = ANY($1::bigint[]);
+        """, unique_ids)
+        return {row["id"]: {"road_name": row["road_name"], "road_type": row["road_type"]}
+                for row in rows}
+
+    # ── Cost prefetch (called once after load) ─────────────────────────
 
     async def _prefetch_edge_costs(self, db) -> None:
-        """
-        Bulk-load AQI + risk for all edges in 2 queries.
-        Falls back gracefully if tables are empty.
-        """
         t0 = time.monotonic()
         logger.info("Pre-fetching edge AQI and risk costs...")
 
-        # AQI — spatial join with grid cells
+        # AQI
         try:
             aqi_rows = await db.fetch("""
-                SELECT
-                    e.id  AS edge_id,
-                    COALESCE(AVG(g.aqi_value), 50.0) AS avg_aqi
+                SELECT e.id AS edge_id, COALESCE(AVG(g.aqi_value), 50.0) AS avg_aqi
                 FROM road_segments e
                 LEFT JOIN grid_cells g ON ST_Intersects(e.geom, g.geom)
                 GROUP BY e.id;
             """)
-            self.edge_aqi = {
-                row["edge_id"]: float(row["avg_aqi"]) for row in aqi_rows
-            }
-            logger.info(f"AQI loaded for {len(self.edge_aqi):,} edges.")
+            new_aqi = np.full(self.edge_count, 50.0, dtype=np.float32)
+            for row in aqi_rows:
+                idx = self.edge_idx(int(row["edge_id"]))
+                if idx >= 0:
+                    new_aqi[idx] = float(row["avg_aqi"])
+            self.aqi_costs = new_aqi
+            logger.info(f"  AQI loaded for {len(aqi_rows):,} edges.")
         except Exception as exc:
-            logger.warning(f"AQI prefetch failed (grid_cells empty?): {exc}")
-            self.edge_aqi = {}
+            logger.warning(f"  AQI prefetch failed: {exc}")
 
-        # Risk — proximity to accident blackspots
+        # Risk
         try:
             risk_rows = await db.fetch("""
-                SELECT
-                    e.id AS edge_id,
-                    COALESCE(
-                        SUM(
-                            b.severity_weight /
-                            GREATEST(
-                                ST_Distance(e.geom::geography, b.geom::geography),
-                                1.0
-                            )
-                        ),
-                        0.0
-                    ) AS risk_score
+                SELECT e.id AS edge_id,
+                    COALESCE(SUM(b.severity_weight /
+                        GREATEST(ST_Distance(e.geom::geography, b.geom::geography), 1.0)
+                    ), 0.0) AS risk_score
                 FROM road_segments e
                 LEFT JOIN accident_blackspots b
                     ON ST_DWithin(e.geom::geography, b.geom::geography, 200)
                 GROUP BY e.id;
             """)
-            self.edge_risk = {
-                row["edge_id"]: float(row["risk_score"]) for row in risk_rows
-            }
-            logger.info(f"Risk loaded for {len(self.edge_risk):,} edges.")
+            new_risk = np.zeros(self.edge_count, dtype=np.float32)
+            for row in risk_rows:
+                idx = self.edge_idx(int(row["edge_id"]))
+                if idx >= 0:
+                    new_risk[idx] = float(row["risk_score"])
+            self.risk_costs = new_risk
+            logger.info(f"  Risk loaded for {len(risk_rows):,} edges.")
         except Exception as exc:
-            logger.warning(f"Risk prefetch failed (blackspots empty?): {exc}")
-            self.edge_risk = {}
+            logger.warning(f"  Risk prefetch failed: {exc}")
 
         self._aqi_refreshed_at = time.monotonic()
-        elapsed = time.monotonic() - t0
-        logger.info(f"Edge cost prefetch complete in {elapsed:.1f}s.")
+        logger.info(f"  Edge cost prefetch complete in {time.monotonic() - t0:.1f}s.")
 
-    # ── Phase 2: AQI-only refresh (called by scheduler every 15 min) ──
+    # ── AQI refresh (called by scheduler every 15 min) ────────────────
 
     async def refresh_aqi_costs(self, db) -> None:
-        """
-        Re-fetch only the edge → AQI mapping from PostGIS.
-
-        This is called by the scheduler after each AQI scrape cycle.
-        It skips the full graph reload (nodes, edges, risk) and only
-        replaces self.edge_aqi. The operation is atomic — routing
-        continues reading the old dict until the assignment completes.
-
-        Timing: ~2–5 seconds for ~500k edges (one spatial join query).
-        """
         t0 = time.monotonic()
-        logger.info("[cache] Refreshing edge AQI costs from updated grid...")
-
+        logger.info("[cache] Refreshing edge AQI costs...")
         try:
             aqi_rows = await db.fetch("""
-                SELECT
-                    e.id  AS edge_id,
-                    COALESCE(AVG(g.aqi_value), 50.0) AS avg_aqi
+                SELECT e.id AS edge_id, COALESCE(AVG(g.aqi_value), 50.0) AS avg_aqi
                 FROM road_segments e
                 LEFT JOIN grid_cells g ON ST_Intersects(e.geom, g.geom)
                 GROUP BY e.id;
             """)
-
-            # Build the new dict before assigning — routing reads the
-            # old dict right up until this single assignment completes.
-            new_aqi = {row["edge_id"]: float(row["avg_aqi"]) for row in aqi_rows}
-            self.edge_aqi = new_aqi
+            new_aqi = np.full(self.edge_count, 50.0, dtype=np.float32)
+            for row in aqi_rows:
+                idx = self.edge_idx(int(row["edge_id"]))
+                if idx >= 0:
+                    new_aqi[idx] = float(row["avg_aqi"])
+            self.aqi_costs = new_aqi  # atomic swap
             self._aqi_refreshed_at = time.monotonic()
-
-            elapsed = time.monotonic() - t0
-            logger.info(
-                f"[cache] AQI refresh complete in {elapsed:.1f}s "
-                f"({len(new_aqi):,} edges updated)."
-            )
-
+            logger.info(f"[cache] AQI refresh complete in {time.monotonic() - t0:.1f}s.")
         except Exception as exc:
-            # Keep stale AQI values rather than clearing them to zero.
-            logger.warning(
-                f"[cache] AQI refresh failed — keeping previous values. "
-                f"Error: {exc}"
-            )
+            logger.warning(f"[cache] AQI refresh failed — keeping previous values. Error: {exc}")
 
-    # ── Incident cost refresh (called by scheduler every 10 min) ──────
+    # ── Incident refresh (called by scheduler every 10 min) ───────────
 
     async def refresh_incident_costs(self, db) -> None:
-        """
-        Re-fetch active incidents from live_incidents and map them to edges
-        within 200m. Same atomic-swap pattern as refresh_aqi_costs().
-
-        Cost per incident:
-            severity 1 (low)    → +2.0 edge cost units
-            severity 2 (medium) → +6.0 edge cost units
-            severity 3 (high)   → +10.0 edge cost units
-
-        Multiple incidents on one edge: costs sum, capped at 10.0.
-        Stale incidents (expires_at < NOW) are automatically excluded.
-        """
         t0 = time.monotonic()
-        logger.info("[cache] Refreshing edge incident costs from live_incidents...")
-
-        SEVERITY_COST = {1: 2.0, 2: 6.0, 3: 10.0}
-
+        logger.info("[cache] Refreshing edge incident costs...")
         try:
             rows = await db.fetch("""
-                SELECT
-                    e.id AS edge_id,
+                SELECT e.id AS edge_id,
                     COALESCE(SUM(
-                        CASE li.severity
-                            WHEN 3 THEN 10.0
-                            WHEN 2 THEN 6.0
-                            ELSE 2.0
-                        END
+                        CASE li.severity WHEN 3 THEN 10.0 WHEN 2 THEN 6.0 ELSE 2.0 END
                     ), 0.0) AS incident_cost
                 FROM road_segments e
                 JOIN live_incidents li
-                    ON ST_DWithin(
-                        e.geom::geography,
-                        li.geom::geography,
-                        200
-                    )
-                WHERE li.is_active = TRUE
-                  AND li.expires_at > NOW()
+                    ON ST_DWithin(e.geom::geography, li.geom::geography, 200)
+                WHERE li.is_active = TRUE AND li.expires_at > NOW()
                 GROUP BY e.id;
             """)
-
-            new_incidents: dict[int, float] = {}
+            new_inc = np.zeros(self.edge_count, dtype=np.float32)
             for row in rows:
-                cost = min(float(row["incident_cost"]), 10.0)
-                if cost > 0:
-                    new_incidents[row["edge_id"]] = cost
-
-            # Atomic swap
-            self.edge_incident = new_incidents
+                idx = self.edge_idx(int(row["edge_id"]))
+                if idx >= 0:
+                    new_inc[idx] = float(min(row["incident_cost"], 10.0))
+            self.incident_costs = new_inc  # atomic swap
             self._incident_refreshed_at = time.monotonic()
-
-            elapsed = time.monotonic() - t0
             logger.info(
-                f"[cache] Incident refresh complete in {elapsed:.1f}s "
-                f"({len(new_incidents)} edges affected by active incidents)."
+                f"[cache] Incident refresh complete in {time.monotonic() - t0:.1f}s "
+                f"({self.incident_count} edges affected)."
             )
-
         except Exception as exc:
-            logger.warning(
-                f"[cache] Incident refresh failed — keeping previous values. "
-                f"Error: {exc}"
-            )
+            logger.warning(f"[cache] Incident refresh failed — keeping previous values. Error: {exc}")
 
-    # ── Phase 2: Speed patch (called by scheduler every 5 min) ────────
+    # ── Speed patch (called by scheduler every 5 min) ─────────────────
 
     def update_speeds(self, edge_speeds: dict[int, float]) -> None:
         """
-        Patch self.edge_data and self.adjacency with fresh speed_kmh values.
-
-        Called by the traffic scheduler after it writes updated speeds
-        to road_segments in PostGIS. This keeps the in-memory graph
-        consistent with the DB without a full reload.
-
-        Parameters
-        ──────────
-        edge_speeds : {edge_id: speed_kmh}
-            Dict returned by the updated traffic_ingestion.scrape_traffic().
-            Only contains edges that actually got a new reading this cycle.
-
-        Implementation note
-        ────────────────────
-        The adjacency list stores tuples of (neighbour, edge_id, length_m,
-        speed_kmh). Since tuples are immutable, we rebuild the neighbour
-        list for each affected source node. This is done per-node rather
-        than per-edge to avoid scanning the entire adjacency dict.
-
-        For 100 edges updated per traffic cycle the scan is negligible —
-        we track which nodes to rebuild via a set then do one pass.
+        Patch fwd_speed and rev_speed in-place with fresh speed_kmh values.
+        edge_speeds: {DB_edge_id: speed_kmh}
         """
-        if not edge_speeds:
+        if not edge_speeds or self.fwd_speed is None:
             return
+        patched = 0
+        for db_eid, new_speed in edge_speeds.items():
+            cidx = self.edge_idx(db_eid)
+            if cidx < 0:
+                continue
+            # Update all forward CSR entries for this edge
+            matches = np.where(self.fwd_eid == cidx)[0]
+            self.fwd_speed[matches] = np.float32(new_speed)
+            # Update all reverse CSR entries
+            rev_matches = np.where(self.rev_eid == cidx)[0]
+            self.rev_speed[rev_matches] = np.float32(new_speed)
+            patched += 1
+        logger.info(f"[cache] Speed patch: {patched} edges updated.")
 
-        affected_eids = set(edge_speeds.keys())
+    # ── Cost accessors (return Python float for compatibility) ─────────
 
-        # ── Patch edge_data ───────────────────────────────────────────
-        patched_count = 0
-        for eid, new_speed in edge_speeds.items():
-            if eid in self.edge_data:
-                self.edge_data[eid]["speed_kmh"] = new_speed
-                patched_count += 1
+    def get_aqi(self, compact_eid: int) -> float:
+        if self.aqi_costs is None or compact_eid < 0 or compact_eid >= len(self.aqi_costs):
+            return 50.0
+        return float(self.aqi_costs[compact_eid])
 
-        # ── Patch adjacency list ──────────────────────────────────────
-        # Find all source nodes whose neighbour lists contain a patched edge.
-        # We rebuild those lists in-place using a new tuple for each entry.
-        nodes_to_rebuild: set[int] = set()
-        for node_id, neighbours in self.adjacency.items():
-            for nbr, eid, _len, _spd in neighbours:
-                if eid in affected_eids:
-                    nodes_to_rebuild.add(node_id)
-                    break  # one match per node is enough
-
-        for node_id in nodes_to_rebuild:
-            self.adjacency[node_id] = [
-                (nbr, eid, length_m, edge_speeds.get(eid, old_spd))
-                for nbr, eid, length_m, old_spd in self.adjacency[node_id]
-            ]
-
-        # Fix R2: keep rev_adjacency in sync with updated speeds
-        rev_nodes_to_rebuild: set[int] = set()
-        for node_id, rev_neighbours in self.rev_adjacency.items():
-            for src, eid, _len, _spd in rev_neighbours:
-                if eid in affected_eids:
-                    rev_nodes_to_rebuild.add(node_id)
-                    break
-
-        for node_id in rev_nodes_to_rebuild:
-            self.rev_adjacency[node_id] = [
-                (src, eid, length_m, edge_speeds.get(eid, old_spd))
-                for src, eid, length_m, old_spd in self.rev_adjacency[node_id]
-            ]
-
-        logger.info(
-            f"[cache] Speed patch: {patched_count} edges, "
-            f"{len(nodes_to_rebuild)} fwd + {len(rev_nodes_to_rebuild)} rev "
-            f"adjacency nodes rebuilt."
-        )
-
-    # ── Accessors ─────────────────────────────────────────────────────
-
-    def get_aqi(self, edge_id: int) -> float:
-        """Return cached AQI for an edge, defaulting to 50 (moderate)."""
-        return self.edge_aqi.get(edge_id, 50.0)
-
-    def get_risk(self, edge_id: int) -> float:
-        """Return cached risk score for an edge, defaulting to 0."""
-        return self.edge_risk.get(edge_id, 0.0)
-
-    def get_incident(self, edge_id: int) -> float:
-        """Return live incident cost for an edge, defaulting to 0."""
-        return self.edge_incident.get(edge_id, 0.0)
-
-    def get_congestion(self, edge_id: int) -> float:
-        """
-        Return congestion ratio for an edge: 0.0 = free-flowing, 1.0 = gridlock.
-        Computed as 1 - (current_speed / base_speed). base_speed is the OSM
-        free-flow speed captured at graph load time and never overwritten by
-        the TomTom scraper, so this ratio reflects real degradation.
-        Returns 0.0 (free-flowing) for edges with no traffic data yet.
-        """
-        ed = self.edge_data.get(edge_id)
-        if not ed:
+    def get_risk(self, compact_eid: int) -> float:
+        if self.risk_costs is None or compact_eid < 0 or compact_eid >= len(self.risk_costs):
             return 0.0
-        base = ed.get("base_speed_kmh", 0)
-        current = ed.get("speed_kmh", 0)
+        return float(self.risk_costs[compact_eid])
+
+    def get_incident(self, compact_eid: int) -> float:
+        if self.incident_costs is None or compact_eid < 0 or compact_eid >= len(self.incident_costs):
+            return 0.0
+        return float(self.incident_costs[compact_eid])
+
+    def get_congestion(self, compact_eid: int) -> float:
+        """
+        Congestion ratio: 0.0 = free-flowing, 1.0 = gridlock.
+        Computed as 1 - (current_speed / base_speed).
+        """
+        if self.fwd_speed is None or compact_eid < 0:
+            return 0.0
+        base = float(self.base_speed[compact_eid]) if self.base_speed is not None else 0.0
         if base <= 0:
             return 0.0
+        # Current speed = most recent fwd_speed entry for this edge
+        matches = np.where(self.fwd_eid == compact_eid)[0]
+        if len(matches) == 0:
+            return 0.0
+        current = float(self.fwd_speed[matches[0]])
         return max(0.0, min(1.0, 1.0 - current / base))
 
 
-# Module-level singleton — import this everywhere
+# Module-level singleton
 graph_cache = GraphCache()

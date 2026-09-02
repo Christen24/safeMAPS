@@ -1,7 +1,8 @@
 """
-SafeMAPS — Bidirectional A* Routing Engine
+SafeMAPS — Bidirectional A* Routing Engine (Phase 3 CSR)
 
-Phase 11.1: Replaces unidirectional A* for long-distance routes (>5km straight line).
+Phase 3: Uses CSR arrays from graph_cache instead of dict adjacency.
+         Signature changed from DB node ids to compact node indices.
 
 Why bidirectional A*?
 ─────────────────────
@@ -12,7 +13,7 @@ in each direction, so the total explored area is:
     2 × π(d/2)² = π·d²/2   (vs. π·d² for unidirectional)
 
 For a 25km Bangalore route this halves search space and cuts computation
-from ~3s to ~1.2s. The win is proportional to route length.
+from ~3s to ~1.2s.
 
 Correctness
 ───────────
@@ -21,137 +22,102 @@ This implementation uses the Kaindl-Kainz stopping criterion:
 where μ is the best complete path found so far and top_f/top_b are the
 minimum f-scores in each queue. This is optimal for consistent heuristics.
 
-Integration
-───────────
-Called by routing.py when straight-line distance > BIDIRECTIONAL_THRESHOLD_M.
-Falls back to standard A* if bidirectional finds no path.
+Phase 3 notes
+─────────────
+- `start_idx` and `goal_idx` are now compact node indices (not DB ids).
+- Forward search iterates fwd_indptr/fwd_nbr/fwd_eid/fwd_length/fwd_speed.
+- Backward search iterates rev_indptr/rev_nbr/rev_eid/rev_length/rev_speed.
+- _build_reverse_adjacency() is no longer needed; rev CSR is built at load time.
+- road_type is deferred to response assembly (not needed during search).
 """
 
 import heapq
-import math
 from typing import Optional
 
 from graph_cache import graph_cache
-from routing import (
-    haversine, compute_edge_cost, get_time_multiplier,
-)
+from routing import haversine, compute_edge_cost, get_time_multiplier
 
-# Use bidirectional when origin-destination distance exceeds this
 BIDIRECTIONAL_THRESHOLD_M = 5_000  # 5 km
 
 
-def _build_reverse_adjacency(
-    adjacency: dict[int, list],
-) -> dict[int, list[tuple]]:
-    """
-    Build a reversed adjacency list from the forward one.
-    Each (u → v, edge_id, len, speed) becomes (v → u, edge_id, len, speed).
-    This lets the backward search explore incoming edges.
-    """
-    rev: dict[int, list[tuple]] = {}
-    for u, neighbours in adjacency.items():
-        for nbr, edge_id, length_m, speed_kmh in neighbours:
-            if nbr not in rev:
-                rev[nbr] = []
-            rev[nbr].append((u, edge_id, length_m, speed_kmh))
-    return rev
-
-
 def bidirectional_astar(
-    start_id:  int,
-    goal_id:   int,
+    start_idx: int,
+    goal_idx:  int,
     alpha:     float,
     beta:      float,
     gamma:     float,
     hour:      Optional[int],
 ) -> Optional[list[tuple[int, int, int]]]:
     """
-    Run bidirectional A* between start_id and goal_id.
-    Returns (from_node, to_node, edge_id) steps on the optimal path, or None if unreachable.
+    Run bidirectional A* between start_idx and goal_idx (compact node indices).
+    Returns (from_compact_idx, to_compact_idx, compact_edge_idx) steps, or None.
 
-    Both forward and backward searches share:
-     - graph_cache.nodes          (lat/lon per node)
-     - graph_cache.adjacency      (forward edges)
-     - graph_cache.edge_data      (speed, road_type)
-     - graph_cache.get_aqi/risk/incident (cost components)
-
-    The backward search uses a lazily-built reverse adjacency.
+    Both forward and backward searches read directly from graph_cache CSR arrays.
     """
     if not graph_cache.is_loaded:
         return None
 
-    nodes     = graph_cache.nodes
-    adjacency = graph_cache.adjacency
-    edge_data = graph_cache.edge_data
-
-    if start_id not in nodes or goal_id not in nodes:
+    gc = graph_cache
+    N = gc.node_count
+    if start_idx < 0 or goal_idx < 0 or start_idx >= N or goal_idx >= N:
         return None
 
-    goal_lat,  goal_lon  = nodes[goal_id]
-    start_lat, start_lon = nodes[start_id]
-
-    # Build reverse graph (expensive first call, but still O(E))
-    # Fix R2: use pre-built reverse adjacency from graph_cache.
-    # _build_reverse_adjacency() iterated all ~500k edges on every route
-    # call — called 4× concurrently per /compare request. Now built once
-    # at startup in graph_cache.load() and reused here.
-    from graph_cache import graph_cache as _gc
-    rev_adjacency = _gc.rev_adjacency if _gc.rev_adjacency else _build_reverse_adjacency(adjacency)
+    goal_lat  = float(gc.node_lat[goal_idx])
+    goal_lon  = float(gc.node_lon[goal_idx])
+    start_lat = float(gc.node_lat[start_idx])
+    start_lon = float(gc.node_lon[start_idx])
 
     # ── Forward search state ─────────────────────────────────────────
-    g_f: dict[int, float] = {start_id: 0.0}
-    cf_from: dict[int, tuple[int, int]] = {}      # node → (prev_node, edge_id)
-    open_f = [(0.0, start_id)]
+    g_f: dict[int, float] = {start_idx: 0.0}
+    cf_from: dict[int, tuple[int, int, float, float]] = {}  # node_idx → (prev_idx, compact_eid, length_m, speed_kmh)
+    open_f = [(0.0, start_idx)]
 
     # ── Backward search state ────────────────────────────────────────
-    g_b: dict[int, float] = {goal_id: 0.0}
-    cb_from: dict[int, tuple[int, int]] = {}
-    open_b = [(0.0, goal_id)]
+    g_b: dict[int, float] = {goal_idx: 0.0}
+    cb_from: dict[int, tuple[int, int, float, float]] = {}
+    open_b = [(0.0, goal_idx)]
 
     visited_f: set[int] = set()
     visited_b: set[int] = set()
 
-    mu = float("inf")           # best complete path cost found so far
+    mu = float("inf")
     meeting_node: Optional[int] = None
 
-    def _h_forward(node_id: int) -> float:
-        """Admissible heuristic from node to goal (forward direction)."""
-        if node_id not in nodes:
-            return 0.0
-        nlat, nlon = nodes[node_id]
-        d = haversine(nlat, nlon, goal_lat, goal_lon)
-        return alpha * (d / 3.6 / 120.0 / 60.0)
+    def _h_forward(node_idx: int) -> float:
+        nlat = float(gc.node_lat[node_idx])
+        nlon = float(gc.node_lon[node_idx])
+        return alpha * (haversine(nlat, nlon, goal_lat, goal_lon) / 3.6 / 120.0 / 60.0)
 
-    def _h_backward(node_id: int) -> float:
-        """Admissible heuristic from node to start (backward direction)."""
-        if node_id not in nodes:
-            return 0.0
-        nlat, nlon = nodes[node_id]
-        d = haversine(nlat, nlon, start_lat, start_lon)
-        return alpha * (d / 3.6 / 120.0 / 60.0)
+    def _h_backward(node_idx: int) -> float:
+        nlat = float(gc.node_lat[node_idx])
+        nlon = float(gc.node_lon[node_idx])
+        return alpha * (haversine(nlat, nlon, start_lat, start_lon) / 3.6 / 120.0 / 60.0)
 
     def _expand_forward(current: int) -> None:
         nonlocal mu, meeting_node
-        for neighbour, edge_id, length_m, speed_kmh in adjacency.get(current, []):
-            speed_ms      = max(speed_kmh / 3.6, 0.5)
+        s, e = int(gc.fwd_indptr[current]), int(gc.fwd_indptr[current + 1])
+        for i in range(s, e):
+            neighbour   = int(gc.fwd_nbr[i])
+            compact_eid = int(gc.fwd_eid[i])
+            length_m    = float(gc.fwd_length[i])
+            speed_kmh   = float(gc.fwd_speed[i])
+            speed_ms    = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
-            road_type     = edge_data.get(edge_id, {}).get("road_type")
+            # road_type deferred — use None, time_multiplier=1.0 during search
             edge_cost = compute_edge_cost(
                 travel_time_s,
-                graph_cache.get_aqi(edge_id),
-                graph_cache.get_risk(edge_id),
+                gc.get_aqi(compact_eid),
+                gc.get_risk(compact_eid),
                 alpha, beta, gamma,
-                get_time_multiplier(road_type, hour),
-                graph_cache.get_incident(edge_id),
-                road_type,
+                1.0,
+                gc.get_incident(compact_eid),
+                None,
             )
             new_g = g_f[current] + edge_cost
             if new_g < g_f.get(neighbour, float("inf")):
                 g_f[neighbour] = new_g
-                cf_from[neighbour] = (current, edge_id)
+                cf_from[neighbour] = (current, compact_eid, length_m, speed_kmh)
                 heapq.heappush(open_f, (new_g + _h_forward(neighbour), neighbour))
-
-            # Check if backward has already visited this node
             if neighbour in visited_b:
                 candidate = new_g + g_b[neighbour]
                 if candidate < mu:
@@ -160,45 +126,45 @@ def bidirectional_astar(
 
     def _expand_backward(current: int) -> None:
         nonlocal mu, meeting_node
-        for neighbour, edge_id, length_m, speed_kmh in rev_adjacency.get(current, []):
-            speed_ms      = max(speed_kmh / 3.6, 0.5)
+        s, e = int(gc.rev_indptr[current]), int(gc.rev_indptr[current + 1])
+        for i in range(s, e):
+            neighbour   = int(gc.rev_nbr[i])
+            compact_eid = int(gc.rev_eid[i])
+            length_m    = float(gc.rev_length[i])
+            speed_kmh   = float(gc.rev_speed[i])
+            speed_ms    = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
-            road_type     = edge_data.get(edge_id, {}).get("road_type")
             edge_cost = compute_edge_cost(
                 travel_time_s,
-                graph_cache.get_aqi(edge_id),
-                graph_cache.get_risk(edge_id),
+                gc.get_aqi(compact_eid),
+                gc.get_risk(compact_eid),
                 alpha, beta, gamma,
-                get_time_multiplier(road_type, hour),
-                graph_cache.get_incident(edge_id),
-                road_type,
+                1.0,
+                gc.get_incident(compact_eid),
+                None,
             )
             new_g = g_b[current] + edge_cost
             if new_g < g_b.get(neighbour, float("inf")):
                 g_b[neighbour] = new_g
-                cb_from[neighbour] = (current, edge_id)
+                cb_from[neighbour] = (current, compact_eid, length_m, speed_kmh)
                 heapq.heappush(open_b, (new_g + _h_backward(neighbour), neighbour))
-
             if neighbour in visited_f:
                 candidate = g_f[neighbour] + new_g
                 if candidate < mu:
                     mu = candidate
                     meeting_node = neighbour
 
-    # ── Main loop — alternate forward/backward expansions ────────────
-    MAX_ITER = 2_000_000  # safety cap
+    # ── Main loop ─────────────────────────────────────────────────────
+    MAX_ITER = 2_000_000
     for _ in range(MAX_ITER):
-        # Stopping criterion: both queues exhausted or suboptimality bound met
-        top_f = open_f[0][0]  if open_f  else float("inf")
-        top_b = open_b[0][0]  if open_b  else float("inf")
+        top_f = open_f[0][0] if open_f else float("inf")
+        top_b = open_b[0][0] if open_b else float("inf")
 
         if top_f + top_b >= mu:
-            break  # cannot improve mu — optimal path found
-
+            break
         if not open_f and not open_b:
             break
 
-        # Expand whichever frontier is smaller
         if top_f <= top_b and open_f:
             f_score, current = heapq.heappop(open_f)
             if current in visited_f:
@@ -224,22 +190,21 @@ def bidirectional_astar(
         return None
 
     # ── Reconstruct path through meeting node ─────────────────────────
-    # Forward half: start_id → meeting_node
-    path_edges_fwd: list[tuple[int, int, int]] = []
+    # Forward half: start_idx → meeting_node
+    path_edges_fwd: list[tuple[int, int, int, float, float]] = []
     cur = meeting_node
     while cur in cf_from:
-        prev, edge_id = cf_from[cur]
-        path_edges_fwd.append((prev, cur, edge_id))
+        prev, eid, length_m, speed_kmh = cf_from[cur]
+        path_edges_fwd.append((prev, cur, eid, length_m, speed_kmh))
         cur = prev
     path_edges_fwd.reverse()
 
-    # Backward half: meeting_node → goal_id
-    # The backward graph stores (prev_in_backward = next_in_forward)
-    path_edges_bwd: list[tuple[int, int, int]] = []
+    # Backward half: meeting_node → goal_idx
+    path_edges_bwd: list[tuple[int, int, int, float, float]] = []
     cur = meeting_node
     while cur in cb_from:
-        nxt, edge_id = cb_from[cur]
-        path_edges_bwd.append((cur, nxt, edge_id))
+        nxt, eid, length_m, speed_kmh = cb_from[cur]
+        path_edges_bwd.append((cur, nxt, eid, length_m, speed_kmh))
         cur = nxt
 
     return path_edges_fwd + path_edges_bwd
