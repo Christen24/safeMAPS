@@ -48,6 +48,17 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+ROAD_TYPES = [
+    "motorway", "motorway_link", "trunk", "trunk_link",
+    "primary", "primary_link", "secondary", "secondary_link",
+    "tertiary", "tertiary_link", "unclassified", "residential",
+    "living_street", "service", "pedestrian", "track", "path", 
+    "cycleway", "footway", "steps", "road", "school_zone", 
+    "school", "school_zone_link", "unknown"
+]
+ROAD_TYPE_TO_CODE = {rt: i for i, rt in enumerate(ROAD_TYPES)}
+UNKNOWN_CODE = ROAD_TYPE_TO_CODE["unknown"]
+
 
 class GraphCache:
     """Singleton holding the in-memory road graph as CSR arrays."""
@@ -80,6 +91,7 @@ class GraphCache:
         # base speed per unique edge (for congestion ratio)
         self.base_speed:  Optional[np.ndarray] = None  # float32[E_unique]
         self.current_speed: Optional[np.ndarray] = None # float32[E_unique]
+        self.road_type_code: Optional[np.ndarray] = None # int8[E_unique]
 
         # ── Cost overlays (indexed by compact edge index) ────────────
         self.aqi_costs:      Optional[np.ndarray] = None  # float32[E_unique]
@@ -150,6 +162,14 @@ class GraphCache:
             return idx
         return -1
 
+    def get_road_type(self, compact_eid: int) -> str:
+        if self.road_type_code is None or compact_eid < 0 or compact_eid >= len(self.road_type_code):
+            return "unknown"
+        code = self.road_type_code[compact_eid]
+        if 0 <= code < len(ROAD_TYPES):
+            return ROAD_TYPES[code]
+        return "unknown"
+
     # ── Full graph load ───────────────────────────────────────────────
 
     async def load(self, db) -> int:
@@ -194,6 +214,7 @@ class GraphCache:
                 target_node,
                 length_m,
                 speed_kmh,
+                road_type,
                 oneway
             FROM road_segments;
         """)
@@ -204,6 +225,7 @@ class GraphCache:
 
         edge_db_id_list: list[int]   = []
         base_speed_list: list[float] = []
+        road_type_list: list[int]    = []
         # Map DB edge id → compact edge index (built incrementally)
         edge_id_to_compact: dict[int, int] = {}
 
@@ -213,6 +235,7 @@ class GraphCache:
             tgt_did = int(row["target_node"])
             length  = float(row["length_m"]  or 0)
             speed   = float(row["speed_kmh"] or 30)
+            rtype   = row["road_type"] or "unknown"
             oneway  = bool(row["oneway"])
 
             src_idx = id_to_idx.get(src_did, -1)
@@ -226,6 +249,7 @@ class GraphCache:
                 edge_id_to_compact[db_eid] = compact_eid
                 edge_db_id_list.append(db_eid)
                 base_speed_list.append(speed)
+                road_type_list.append(ROAD_TYPE_TO_CODE.get(rtype, UNKNOWN_CODE))
             else:
                 compact_eid = edge_id_to_compact[db_eid]
 
@@ -271,13 +295,14 @@ class GraphCache:
         # ── 4. Edge id → compact index lookup array ───────────────────
         # Sort by DB edge id so we can use searchsorted
         edge_db_ids_arr = np.array(edge_db_id_list, dtype=np.int64)
-        base_speed_arr  = np.array(base_speed_list,  dtype=np.float32)
+        base_speed_arr  = np.array(base_speed_list, dtype=np.float32)
+        road_type_arr   = np.array(road_type_list, dtype=np.int8)
 
-        # Sort edge compact indices by DB id for searchsorted
         edge_sort = np.argsort(edge_db_ids_arr, kind="stable")
         edge_db_ids_sorted = edge_db_ids_arr[edge_sort]
         base_speed_sorted  = base_speed_arr[edge_sort]
         current_speed_sorted = np.copy(base_speed_sorted)
+        road_type_sorted   = road_type_arr[edge_sort]
 
         # Remap compact indices in CSR arrays to match sorted order
         # old_compact_idx → new_compact_idx
@@ -311,6 +336,7 @@ class GraphCache:
         self.edge_db_ids = edge_db_ids_sorted
         self.base_speed  = base_speed_sorted
         self.current_speed = current_speed_sorted
+        self.road_type_code = road_type_sorted
         self.aqi_costs   = aqi_costs
         self.risk_costs  = risk_costs
         self.incident_costs = incident_costs

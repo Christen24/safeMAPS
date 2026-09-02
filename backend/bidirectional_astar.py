@@ -103,15 +103,16 @@ def bidirectional_astar(
             speed_kmh   = float(gc.current_speed[compact_eid])
             speed_ms    = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
-            # road_type deferred — use None, time_multiplier=1.0 during search
+            road_type = gc.get_road_type(compact_eid)
+            time_multiplier = get_time_multiplier(road_type, hour)
             edge_cost = compute_edge_cost(
                 travel_time_s,
                 gc.get_aqi(compact_eid),
                 gc.get_risk(compact_eid),
                 alpha, beta, gamma,
-                1.0,
+                time_multiplier,
                 gc.get_incident(compact_eid),
-                None,
+                road_type,
             )
             new_g = g_f[current] + edge_cost
             if new_g < g_f.get(neighbour, float("inf")):
@@ -134,14 +135,16 @@ def bidirectional_astar(
             speed_kmh   = float(gc.current_speed[compact_eid])
             speed_ms    = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
+            road_type = gc.get_road_type(compact_eid)
+            time_multiplier = get_time_multiplier(road_type, hour)
             edge_cost = compute_edge_cost(
                 travel_time_s,
                 gc.get_aqi(compact_eid),
                 gc.get_risk(compact_eid),
                 alpha, beta, gamma,
-                1.0,
+                time_multiplier,
                 gc.get_incident(compact_eid),
-                None,
+                road_type,
             )
             new_g = g_b[current] + edge_cost
             if new_g < g_b.get(neighbour, float("inf")):
