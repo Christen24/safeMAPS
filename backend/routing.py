@@ -179,7 +179,7 @@ def _astar_search(
             neighbour   = int(gc.fwd_nbr[i])
             compact_eid = int(gc.fwd_eid[i])
             length_m    = float(gc.fwd_length[i])
-            speed_kmh   = float(gc.fwd_speed[i])
+            speed_kmh   = float(gc.current_speed[compact_eid])
             speed_ms    = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
             edge_cost = compute_edge_cost(
@@ -421,7 +421,7 @@ async def find_route(
 
     # ── Fetch geometry and metadata for this route's edges only ───────
     # Convert compact edge indices back to DB edge ids for the DB fetch
-    route_compact_eids = [eid for _f, _t, eid in path_steps]
+    route_compact_eids = [eid for _f, _t, eid, _l, _s in path_steps]
     route_db_eids = [int(gc.edge_db_ids[eid]) for eid in route_compact_eids]
 
     edge_geometries = await gc.fetch_edge_geometries(db, route_db_eids)

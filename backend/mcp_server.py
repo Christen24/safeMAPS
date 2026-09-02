@@ -486,7 +486,7 @@ if __name__ == "__main__":
             "nodes": graph_cache.node_count,
             "edges": graph_cache.edge_count,
             "age_seconds": round(graph_cache.age_seconds, 1),
-            "edges_with_aqi": len(graph_cache.edge_aqi),
+            "edges_with_aqi": graph_cache.aqi_count,
             "aqi_age_seconds": round(graph_cache.aqi_age_seconds, 1),
             "edges_with_incidents": graph_cache.incident_count,
             "incident_age_seconds": round(graph_cache.incident_age_seconds, 1),
@@ -502,7 +502,7 @@ if __name__ == "__main__":
         await graph_cache.refresh_aqi_costs(db)
         return JSONResponse({
             "status": "refreshed",
-            "edges_with_aqi": len(graph_cache.edge_aqi),
+            "edges_with_aqi": graph_cache.aqi_count,
             "aqi_age_seconds": round(graph_cache.aqi_age_seconds, 1),
         })
     app.add_route("/internal/refresh-aqi", refresh_aqi, methods=["POST"])
@@ -510,7 +510,7 @@ if __name__ == "__main__":
     async def run_aqi_scrape(request):
         from scheduler import run_aqi_cycle
         await run_aqi_cycle()
-        return JSONResponse({"status": "complete", "edges_with_aqi": len(graph_cache.edge_aqi)})
+        return JSONResponse({"status": "complete", "edges_with_aqi": graph_cache.aqi_count})
     app.add_route("/internal/run-aqi-scrape", run_aqi_scrape, methods=["POST"])
 
     async def run_traffic_scrape(request):

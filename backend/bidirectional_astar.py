@@ -100,7 +100,7 @@ def bidirectional_astar(
             neighbour   = int(gc.fwd_nbr[i])
             compact_eid = int(gc.fwd_eid[i])
             length_m    = float(gc.fwd_length[i])
-            speed_kmh   = float(gc.fwd_speed[i])
+            speed_kmh   = float(gc.current_speed[compact_eid])
             speed_ms    = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
             # road_type deferred — use None, time_multiplier=1.0 during search
@@ -131,7 +131,7 @@ def bidirectional_astar(
             neighbour   = int(gc.rev_nbr[i])
             compact_eid = int(gc.rev_eid[i])
             length_m    = float(gc.rev_length[i])
-            speed_kmh   = float(gc.rev_speed[i])
+            speed_kmh   = float(gc.current_speed[compact_eid])
             speed_ms    = max(speed_kmh / 3.6, 0.5)
             travel_time_s = length_m / speed_ms
             edge_cost = compute_edge_cost(

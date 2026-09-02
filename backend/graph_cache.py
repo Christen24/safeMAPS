@@ -66,14 +66,12 @@ class GraphCache:
         self.fwd_nbr:     Optional[np.ndarray] = None  # int32[E_total]   neighbour compact index
         self.fwd_eid:     Optional[np.ndarray] = None  # int32[E_total]   compact edge index
         self.fwd_length:  Optional[np.ndarray] = None  # float32[E_total] metres
-        self.fwd_speed:   Optional[np.ndarray] = None  # float32[E_total] km/h (mutable for traffic)
 
         # ── Reverse CSR (for bidirectional A*) ───────────────────────
         self.rev_indptr:  Optional[np.ndarray] = None  # int32[N+1]
         self.rev_nbr:     Optional[np.ndarray] = None  # int32[E_total]
         self.rev_eid:     Optional[np.ndarray] = None  # int32[E_total]
         self.rev_length:  Optional[np.ndarray] = None  # float32[E_total]
-        self.rev_speed:   Optional[np.ndarray] = None  # float32[E_total]
 
         # ── Edge id mappings ─────────────────────────────────────────
         # edge_db_ids[i] = DB edge id for compact index i  (sorted)
@@ -81,6 +79,7 @@ class GraphCache:
         self.edge_db_ids: Optional[np.ndarray] = None  # int64[E_unique]
         # base speed per unique edge (for congestion ratio)
         self.base_speed:  Optional[np.ndarray] = None  # float32[E_unique]
+        self.current_speed: Optional[np.ndarray] = None # float32[E_unique]
 
         # ── Cost overlays (indexed by compact edge index) ────────────
         self.aqi_costs:      Optional[np.ndarray] = None  # float32[E_unique]
@@ -124,6 +123,12 @@ class GraphCache:
         if self.incident_costs is None:
             return 0
         return int(np.count_nonzero(self.incident_costs))
+
+    @property
+    def aqi_count(self) -> int:
+        if self.aqi_costs is None:
+            return 0
+        return int(np.count_nonzero(self.aqi_costs != 50.0))
 
     # ── Node lookup helpers ───────────────────────────────────────────
 
@@ -193,10 +198,9 @@ class GraphCache:
             FROM road_segments;
         """)
 
-        # Build adjacency lists (Python, temporary — discarded after CSR build)
-        # adj_fwd[src_idx] = list of (tgt_idx, edge_db_id, length_m, speed_kmh)
+        # Build adjacency list (Python, temporary — discarded after CSR build)
+        # adj_fwd[src_idx] = list of (tgt_idx, edge_db_id, length_m)
         adj_fwd: list[list] = [[] for _ in range(N)]
-        adj_rev: list[list] = [[] for _ in range(N)]
 
         edge_db_id_list: list[int]   = []
         base_speed_list: list[float] = []
@@ -225,39 +229,18 @@ class GraphCache:
             else:
                 compact_eid = edge_id_to_compact[db_eid]
 
-            adj_fwd[src_idx].append((tgt_idx, compact_eid, length, speed))
+            adj_fwd[src_idx].append((tgt_idx, compact_eid, length))
             if not oneway:
-                adj_rev[tgt_idx].append((src_idx, compact_eid, length, speed))
-            # Also build explicit reverse CSR
-            adj_rev[tgt_idx] = adj_rev[tgt_idx]  # already appended above if not oneway
-            # For rev CSR we need both directions for bidir A*:
-            # reverse edge: from tgt to src, same edge_id
-            # We add it regardless of oneway for the backward search
-            # (the backward search follows edges in reverse to find paths)
-            # Actually: rev CSR = transposed forward CSR.
-            # adj_rev[tgt_idx] already has the reverse entry for two-way roads.
-            # For one-way roads, we still need it in rev CSR for backward search.
+                # Add the reverse direction to the forward adjacency
+                adj_fwd[tgt_idx].append((src_idx, compact_eid, length))
 
         # Rebuild rev CSR properly: it's the full transpose of fwd
         # (all fwd edges reversed, regardless of oneway — the backward A* 
         #  traverses in the opposite direction of valid travel)
         adj_rev_full: list[list] = [[] for _ in range(N)]
-        for row in edge_rows:
-            db_eid  = int(row["id"])
-            src_did = int(row["source_node"])
-            tgt_did = int(row["target_node"])
-            length  = float(row["length_m"]  or 0)
-            speed   = float(row["speed_kmh"] or 30)
-
-            src_idx = id_to_idx.get(src_did, -1)
-            tgt_idx = id_to_idx.get(tgt_did, -1)
-            if src_idx < 0 or tgt_idx < 0:
-                continue
-            compact_eid = edge_id_to_compact.get(db_eid, -1)
-            if compact_eid < 0:
-                continue
-            # Reverse: tgt → src
-            adj_rev_full[tgt_idx].append((src_idx, compact_eid, length, speed))
+        for src_idx, nbrs in enumerate(adj_fwd):
+            for tgt_idx, compact_eid, length in nbrs:
+                adj_rev_full[tgt_idx].append((src_idx, compact_eid, length))
 
         E = len(edge_db_id_list)
         logger.info(f"  Unique edges: {E:,}")
@@ -271,21 +254,19 @@ class GraphCache:
             nbr_arr    = np.empty(total, dtype=np.int32)
             eid_arr    = np.empty(total, dtype=np.int32)
             length_arr = np.empty(total, dtype=np.float32)
-            speed_arr  = np.empty(total, dtype=np.float32)
             for i, nbrs in enumerate(adj):
                 start = indptr[i]
-                for j, (nbr, eid, length, speed) in enumerate(nbrs):
+                for j, (nbr, eid, length) in enumerate(nbrs):
                     nbr_arr[start + j]    = nbr
                     eid_arr[start + j]    = eid
                     length_arr[start + j] = length
-                    speed_arr[start + j]  = speed
-            return indptr, nbr_arr, eid_arr, length_arr, speed_arr
+            return indptr, nbr_arr, eid_arr, length_arr
 
         logger.info("  Building forward CSR...")
-        fwd_indptr, fwd_nbr, fwd_eid, fwd_length, fwd_speed = _build_csr(adj_fwd)
+        fwd_indptr, fwd_nbr, fwd_eid, fwd_length = _build_csr(adj_fwd)
 
         logger.info("  Building reverse CSR...")
-        rev_indptr, rev_nbr, rev_eid, rev_length, rev_speed = _build_csr(adj_rev_full)
+        rev_indptr, rev_nbr, rev_eid, rev_length = _build_csr(adj_rev_full)
 
         # ── 4. Edge id → compact index lookup array ───────────────────
         # Sort by DB edge id so we can use searchsorted
@@ -296,6 +277,7 @@ class GraphCache:
         edge_sort = np.argsort(edge_db_ids_arr, kind="stable")
         edge_db_ids_sorted = edge_db_ids_arr[edge_sort]
         base_speed_sorted  = base_speed_arr[edge_sort]
+        current_speed_sorted = np.copy(base_speed_sorted)
 
         # Remap compact indices in CSR arrays to match sorted order
         # old_compact_idx → new_compact_idx
@@ -310,7 +292,7 @@ class GraphCache:
         incident_costs = np.zeros(E, dtype=np.float32)
 
         # ── 6. Release build temporaries and commit atomically ────────
-        del adj_fwd, adj_rev, adj_rev_full, node_rows, edge_rows
+        del adj_fwd, adj_rev_full, node_rows, edge_rows
         del id_to_idx, edge_id_to_compact
         del edge_db_ids_arr, base_speed_arr, edge_sort
         gc.collect()
@@ -322,14 +304,13 @@ class GraphCache:
         self.fwd_nbr     = fwd_nbr
         self.fwd_eid     = fwd_eid
         self.fwd_length  = fwd_length
-        self.fwd_speed   = fwd_speed
         self.rev_indptr  = rev_indptr
         self.rev_nbr     = rev_nbr
         self.rev_eid     = rev_eid
         self.rev_length  = rev_length
-        self.rev_speed   = rev_speed
         self.edge_db_ids = edge_db_ids_sorted
         self.base_speed  = base_speed_sorted
+        self.current_speed = current_speed_sorted
         self.aqi_costs   = aqi_costs
         self.risk_costs  = risk_costs
         self.incident_costs = incident_costs
@@ -495,22 +476,17 @@ class GraphCache:
 
     def update_speeds(self, edge_speeds: dict[int, float]) -> None:
         """
-        Patch fwd_speed and rev_speed in-place with fresh speed_kmh values.
+        Patch current_speed in-place with fresh speed_kmh values.
         edge_speeds: {DB_edge_id: speed_kmh}
         """
-        if not edge_speeds or self.fwd_speed is None:
+        if not edge_speeds or self.current_speed is None:
             return
         patched = 0
         for db_eid, new_speed in edge_speeds.items():
             cidx = self.edge_idx(db_eid)
             if cidx < 0:
                 continue
-            # Update all forward CSR entries for this edge
-            matches = np.where(self.fwd_eid == cidx)[0]
-            self.fwd_speed[matches] = np.float32(new_speed)
-            # Update all reverse CSR entries
-            rev_matches = np.where(self.rev_eid == cidx)[0]
-            self.rev_speed[rev_matches] = np.float32(new_speed)
+            self.current_speed[cidx] = np.float32(new_speed)
             patched += 1
         logger.info(f"[cache] Speed patch: {patched} edges updated.")
 
@@ -536,16 +512,12 @@ class GraphCache:
         Congestion ratio: 0.0 = free-flowing, 1.0 = gridlock.
         Computed as 1 - (current_speed / base_speed).
         """
-        if self.fwd_speed is None or compact_eid < 0:
+        if self.current_speed is None or compact_eid < 0:
             return 0.0
         base = float(self.base_speed[compact_eid]) if self.base_speed is not None else 0.0
         if base <= 0:
             return 0.0
-        # Current speed = most recent fwd_speed entry for this edge
-        matches = np.where(self.fwd_eid == compact_eid)[0]
-        if len(matches) == 0:
-            return 0.0
-        current = float(self.fwd_speed[matches[0]])
+        current = float(self.current_speed[compact_eid])
         return max(0.0, min(1.0, 1.0 - current / base))
 
 
