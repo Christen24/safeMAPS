@@ -30,6 +30,7 @@ Transport: streamable-http (MCP 1.2+)
 This server is READ-ONLY. No tool mutates any state.
 """
 
+import asyncio
 import math
 import os
 import sys
@@ -62,12 +63,8 @@ for _candidate in (_here / "data_pipeline", _here.parent / "data_pipeline"):
 
 @asynccontextmanager
 async def lifespan(server):
-    """Load the road graph and DB pool before the MCP server starts accepting requests."""
-    await db.connect()
-    node_count = await graph_cache.load(db)
-    print(f"[safemaps-mcp] graph loaded: {node_count:,} nodes", flush=True)
+    """MCP server lifespan hook (no-op since wrapped_lifespan handles background startup)."""
     yield
-    # Teardown (if ever needed) goes here
 
 
 # ── Server ───────────────────────────────────────────────────────────────
@@ -536,6 +533,9 @@ if __name__ == "__main__":
     app.add_route("/internal/expire-incidents", expire_incidents, methods=["POST"])
     
     async def internal_compare_route_profiles(request):
+        if not graph_cache.is_loaded:
+            return JSONResponse({"error": "Road graph is still loading — try again in a few seconds."}, status_code=503)
+
         body = await request.json()
         import asyncio
         from routing import find_route, get_profile_weights
@@ -560,6 +560,9 @@ if __name__ == "__main__":
     app.add_route("/internal/compare_route_profiles", internal_compare_route_profiles, methods=["POST"])
 
     async def internal_get_safe_route(request):
+        if not graph_cache.is_loaded:
+            return JSONResponse({"error": "Road graph is still loading — try again in a few seconds."}, status_code=503)
+
         body = await request.json()
         from routing import find_route, get_profile_weights
         from models import RouteProfile
@@ -586,17 +589,37 @@ if __name__ == "__main__":
     @asynccontextmanager
     async def wrapped_lifespan(app_instance):
         async with original_lifespan(app_instance):
-            # Our custom startup logic
-            await db.connect()
-            node_count = await graph_cache.load(db)
-            print(f"[safemaps-mcp] graph loaded: {node_count:,} nodes", flush=True)
-            
-            from scheduler import start_scheduler, stop_scheduler
-            scheduler = start_scheduler()
-            
+            scheduler = None
+
+            async def _bg_init():
+                nonlocal scheduler
+                try:
+                    await db.connect()
+                    node_count = await graph_cache.load(db)
+                    print(f"[safemaps-mcp] graph loaded: {node_count:,} nodes", flush=True)
+
+                    from scheduler import start_scheduler
+                    scheduler = start_scheduler()
+                except asyncio.CancelledError:
+                    print("[safemaps-mcp] graph loading task cancelled", flush=True)
+                except Exception as exc:
+                    print(f"[safemaps-mcp] ERROR loading graph: {exc}", flush=True)
+
+            init_task = asyncio.create_task(_bg_init())
+
             yield
-            
-            stop_scheduler(scheduler)
+
+            if not init_task.done():
+                init_task.cancel()
+                try:
+                    await init_task
+                except asyncio.CancelledError:
+                    pass
+
+            if scheduler:
+                from scheduler import stop_scheduler
+                stop_scheduler(scheduler)
+
             try:
                 await db.disconnect()
             except Exception:
