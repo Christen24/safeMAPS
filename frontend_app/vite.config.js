@@ -67,12 +67,17 @@ export default defineConfig({
     ],
     server: {
         port: 5173,
+        allowedHosts: ['safemaps-frontend.onrender.com'],
         proxy: {
             '/api': {
                 target: 'http://localhost:8000',
                 changeOrigin: true,
             },
         },
+    },
+    preview: {
+        host: '0.0.0.0',
+        allowedHosts: ['safemaps-frontend.onrender.com'],
     },
     build: {
         outDir: 'dist',
