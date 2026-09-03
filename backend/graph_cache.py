@@ -207,21 +207,10 @@ class GraphCache:
         logger.info(f"  Nodes: {N:,}")
 
         # ── 2. Edges ─────────────────────────────────────────────────
-        edge_rows = await db.fetch("""
-            SELECT
-                id,
-                source_node,
-                target_node,
-                length_m,
-                speed_kmh,
-                road_type,
-                oneway
-            FROM road_segments;
-        """)
-
-        # Build adjacency list (Python, temporary — discarded after CSR build)
-        # adj_fwd[src_idx] = list of (tgt_idx, edge_db_id, length_m)
-        adj_fwd: list[list] = [[] for _ in range(N)]
+        fwd_src_list: list[int] = []
+        fwd_tgt_list: list[int] = []
+        fwd_eid_list: list[int] = []
+        fwd_len_list: list[float] = []
 
         edge_db_id_list: list[int]   = []
         base_speed_list: list[float] = []
@@ -229,68 +218,91 @@ class GraphCache:
         # Map DB edge id → compact edge index (built incrementally)
         edge_id_to_compact: dict[int, int] = {}
 
-        for row in edge_rows:
-            db_eid  = int(row["id"])
-            src_did = int(row["source_node"])
-            tgt_did = int(row["target_node"])
-            length  = float(row["length_m"]  or 0)
-            speed   = float(row["speed_kmh"] or 30)
-            rtype   = row["road_type"] or "unknown"
-            oneway  = bool(row["oneway"])
+        async with db._require_pool().acquire() as conn:
+            async with conn.transaction():
+                async for row in conn.cursor("""
+                    SELECT
+                        id,
+                        source_node,
+                        target_node,
+                        length_m,
+                        speed_kmh,
+                        road_type,
+                        oneway
+                    FROM road_segments;
+                """):
+                    db_eid  = int(row["id"])
+                    src_did = int(row["source_node"])
+                    tgt_did = int(row["target_node"])
+                    length  = float(row["length_m"]  or 0)
+                    speed   = float(row["speed_kmh"] or 30)
+                    rtype   = row["road_type"] or "unknown"
+                    oneway  = bool(row["oneway"])
 
-            src_idx = id_to_idx.get(src_did, -1)
-            tgt_idx = id_to_idx.get(tgt_did, -1)
-            if src_idx < 0 or tgt_idx < 0:
-                continue  # dangling edge — skip
+                    src_idx = id_to_idx.get(src_did, -1)
+                    tgt_idx = id_to_idx.get(tgt_did, -1)
+                    if src_idx < 0 or tgt_idx < 0:
+                        continue  # dangling edge — skip
 
-            # Assign compact edge index (each DB edge gets exactly one)
-            if db_eid not in edge_id_to_compact:
-                compact_eid = len(edge_db_id_list)
-                edge_id_to_compact[db_eid] = compact_eid
-                edge_db_id_list.append(db_eid)
-                base_speed_list.append(speed)
-                road_type_list.append(ROAD_TYPE_TO_CODE.get(rtype, UNKNOWN_CODE))
-            else:
-                compact_eid = edge_id_to_compact[db_eid]
+                    # Assign compact edge index (each DB edge gets exactly one)
+                    if db_eid not in edge_id_to_compact:
+                        compact_eid = len(edge_db_id_list)
+                        edge_id_to_compact[db_eid] = compact_eid
+                        edge_db_id_list.append(db_eid)
+                        base_speed_list.append(speed)
+                        road_type_list.append(ROAD_TYPE_TO_CODE.get(rtype, UNKNOWN_CODE))
+                    else:
+                        compact_eid = edge_id_to_compact[db_eid]
 
-            adj_fwd[src_idx].append((tgt_idx, compact_eid, length))
-            if not oneway:
-                # Add the reverse direction to the forward adjacency
-                adj_fwd[tgt_idx].append((src_idx, compact_eid, length))
+                    fwd_src_list.append(src_idx)
+                    fwd_tgt_list.append(tgt_idx)
+                    fwd_eid_list.append(compact_eid)
+                    fwd_len_list.append(length)
 
-        # Rebuild rev CSR properly: it's the full transpose of fwd
-        # (all fwd edges reversed, regardless of oneway — the backward A* 
-        #  traverses in the opposite direction of valid travel)
-        adj_rev_full: list[list] = [[] for _ in range(N)]
-        for src_idx, nbrs in enumerate(adj_fwd):
-            for tgt_idx, compact_eid, length in nbrs:
-                adj_rev_full[tgt_idx].append((src_idx, compact_eid, length))
+                    if not oneway:
+                        # Add the reverse direction to the forward adjacency
+                        fwd_src_list.append(tgt_idx)
+                        fwd_tgt_list.append(src_idx)
+                        fwd_eid_list.append(compact_eid)
+                        fwd_len_list.append(length)
 
         E = len(edge_db_id_list)
         logger.info(f"  Unique edges: {E:,}")
 
         # ── 3. Build CSR arrays ───────────────────────────────────────
-        def _build_csr(adj: list[list]) -> tuple:
+        def _build_csr_from_flat(src_arr, tgt_arr, eid_arr, length_arr) -> tuple:
+            sort_idx = np.argsort(src_arr, kind="stable")
+            sorted_src = src_arr[sort_idx]
+            sorted_tgt = tgt_arr[sort_idx]
+            sorted_eid = eid_arr[sort_idx]
+            sorted_len = length_arr[sort_idx]
+            
+            degrees = np.bincount(sorted_src, minlength=N)
             indptr = np.zeros(N + 1, dtype=np.int32)
-            for i, nbrs in enumerate(adj):
-                indptr[i + 1] = indptr[i] + len(nbrs)
-            total = int(indptr[-1])
-            nbr_arr    = np.empty(total, dtype=np.int32)
-            eid_arr    = np.empty(total, dtype=np.int32)
-            length_arr = np.empty(total, dtype=np.float32)
-            for i, nbrs in enumerate(adj):
-                start = indptr[i]
-                for j, (nbr, eid, length) in enumerate(nbrs):
-                    nbr_arr[start + j]    = nbr
-                    eid_arr[start + j]    = eid
-                    length_arr[start + j] = length
-            return indptr, nbr_arr, eid_arr, length_arr
+            indptr[1:] = np.cumsum(degrees)
+            
+            return indptr, sorted_tgt, sorted_eid, sorted_len
+
+        logger.info("  Converting flat lists to arrays...")
+        fwd_src_arr = np.array(fwd_src_list, dtype=np.int32)
+        fwd_tgt_arr = np.array(fwd_tgt_list, dtype=np.int32)
+        fwd_eid_arr = np.array(fwd_eid_list, dtype=np.int32)
+        fwd_len_arr = np.array(fwd_len_list, dtype=np.float32)
+        
+        # Free python lists early
+        del fwd_src_list, fwd_tgt_list, fwd_eid_list, fwd_len_list
 
         logger.info("  Building forward CSR...")
-        fwd_indptr, fwd_nbr, fwd_eid, fwd_length = _build_csr(adj_fwd)
+        fwd_indptr, fwd_nbr, fwd_eid, fwd_length = _build_csr_from_flat(
+            fwd_src_arr, fwd_tgt_arr, fwd_eid_arr, fwd_len_arr
+        )
 
         logger.info("  Building reverse CSR...")
-        rev_indptr, rev_nbr, rev_eid, rev_length = _build_csr(adj_rev_full)
+        rev_indptr, rev_nbr, rev_eid, rev_length = _build_csr_from_flat(
+            fwd_tgt_arr, fwd_src_arr, fwd_eid_arr, fwd_len_arr
+        )
+        
+        del fwd_src_arr, fwd_tgt_arr, fwd_eid_arr, fwd_len_arr
 
         # ── 4. Edge id → compact index lookup array ───────────────────
         # Sort by DB edge id so we can use searchsorted
@@ -317,7 +329,7 @@ class GraphCache:
         incident_costs = np.zeros(E, dtype=np.float32)
 
         # ── 6. Release build temporaries and commit atomically ────────
-        del adj_fwd, adj_rev_full, node_rows, edge_rows
+        del node_rows
         del id_to_idx, edge_id_to_compact
         del edge_db_ids_arr, base_speed_arr, edge_sort
         gc.collect()
