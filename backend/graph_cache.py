@@ -218,53 +218,52 @@ class GraphCache:
         # Map DB edge id → compact edge index (built incrementally)
         edge_id_to_compact: dict[int, int] = {}
 
-        async with db._require_pool().acquire() as conn:
-            async with conn.transaction():
-                async for row in conn.cursor("""
-                    SELECT
-                        id,
-                        source_node,
-                        target_node,
-                        length_m,
-                        speed_kmh,
-                        road_type,
-                        oneway
-                    FROM road_segments;
-                """):
-                    db_eid  = int(row["id"])
-                    src_did = int(row["source_node"])
-                    tgt_did = int(row["target_node"])
-                    length  = float(row["length_m"]  or 0)
-                    speed   = float(row["speed_kmh"] or 30)
-                    rtype   = row["road_type"] or "unknown"
-                    oneway  = bool(row["oneway"])
+        edge_rows = await db.fetch("""
+            SELECT
+                id,
+                source_node,
+                target_node,
+                length_m,
+                speed_kmh,
+                road_type,
+                oneway
+            FROM road_segments;
+        """)
+        for row in edge_rows:
+            db_eid  = int(row["id"])
+            src_did = int(row["source_node"])
+            tgt_did = int(row["target_node"])
+            length  = float(row["length_m"]  or 0)
+            speed   = float(row["speed_kmh"] or 30)
+            rtype   = row["road_type"] or "unknown"
+            oneway  = bool(row["oneway"])
 
-                    src_idx = id_to_idx.get(src_did, -1)
-                    tgt_idx = id_to_idx.get(tgt_did, -1)
-                    if src_idx < 0 or tgt_idx < 0:
-                        continue  # dangling edge — skip
+            src_idx = id_to_idx.get(src_did, -1)
+            tgt_idx = id_to_idx.get(tgt_did, -1)
+            if src_idx < 0 or tgt_idx < 0:
+                continue  # dangling edge — skip
 
-                    # Assign compact edge index (each DB edge gets exactly one)
-                    if db_eid not in edge_id_to_compact:
-                        compact_eid = len(edge_db_id_list)
-                        edge_id_to_compact[db_eid] = compact_eid
-                        edge_db_id_list.append(db_eid)
-                        base_speed_list.append(speed)
-                        road_type_list.append(ROAD_TYPE_TO_CODE.get(rtype, UNKNOWN_CODE))
-                    else:
-                        compact_eid = edge_id_to_compact[db_eid]
+            # Assign compact edge index (each DB edge gets exactly one)
+            if db_eid not in edge_id_to_compact:
+                compact_eid = len(edge_db_id_list)
+                edge_id_to_compact[db_eid] = compact_eid
+                edge_db_id_list.append(db_eid)
+                base_speed_list.append(speed)
+                road_type_list.append(ROAD_TYPE_TO_CODE.get(rtype, UNKNOWN_CODE))
+            else:
+                compact_eid = edge_id_to_compact[db_eid]
 
-                    fwd_src_list.append(src_idx)
-                    fwd_tgt_list.append(tgt_idx)
-                    fwd_eid_list.append(compact_eid)
-                    fwd_len_list.append(length)
+            fwd_src_list.append(src_idx)
+            fwd_tgt_list.append(tgt_idx)
+            fwd_eid_list.append(compact_eid)
+            fwd_len_list.append(length)
 
-                    if not oneway:
-                        # Add the reverse direction to the forward adjacency
-                        fwd_src_list.append(tgt_idx)
-                        fwd_tgt_list.append(src_idx)
-                        fwd_eid_list.append(compact_eid)
-                        fwd_len_list.append(length)
+            if not oneway:
+                # Add the reverse direction to the forward adjacency
+                fwd_src_list.append(tgt_idx)
+                fwd_tgt_list.append(src_idx)
+                fwd_eid_list.append(compact_eid)
+                fwd_len_list.append(length)
 
         E = len(edge_db_id_list)
         logger.info(f"  Unique edges: {E:,}")
@@ -329,7 +328,7 @@ class GraphCache:
         incident_costs = np.zeros(E, dtype=np.float32)
 
         # ── 6. Release build temporaries and commit atomically ────────
-        del node_rows
+        del node_rows, edge_rows
         del id_to_idx, edge_id_to_compact
         del edge_db_ids_arr, base_speed_arr, edge_sort
         gc.collect()
